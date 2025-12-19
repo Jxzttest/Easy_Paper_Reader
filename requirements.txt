@@ -1,0 +1,9 @@
+elasticsearch
+redis
+SQLAlchemy
+asyncpg
+pyyaml
+fastapi
+starlette
+uvicorn
+pydantic
