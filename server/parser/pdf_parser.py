@@ -1,42 +1,45 @@
 import os
 import uuid
 import numpy as np
-from pdf2image import convert_from_path
 import fitz
-from tqdm import tqdm
-import trio
+import asyncio
 import shutil
 import re
 import time
 import numpy as np
 import hashlib
+from tqdm import tqdm
 from typing import Dict, Any, Union, List, Optional
+from server.model.ocr_model.paddle_ocr import PaddleOCRPipeline
 from server.utils.logger import logger
-from src.db.base_db_interface import DatabaseInterface
-
-import asyncio
 
 
 class PDFParser:
-    """PDF文档解析器（支持多种处理模式）"""
+    """PDF文档解析器"""
     _temp_files = []
     
     def __init__(
         self, 
-        file_path: str, 
-        db: DatabaseInterface, 
+        file_path: str,
         **kwargs
     ):
-        super().__init__(file_path, db)
         self.file_path = file_path
         self.file_id = self._generate_file_id()
         self.file_size = self._get_file_size()
         self.checksum = self._calculate_checksum()
         
+        self.pdf_model: PaddleOCRPipeline  = PaddleOCRPipeline()
         # 设置输出目录
         self.output_folder = os.path.join(os.path.dirname(file_path), f'images_{self.file_id}')
+    
+    def register_temp_file(self, file_path: str):
+        """注册临时文件（自动创建目录）"""
+        dir_path = os.path.dirname(file_path)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+        self._temp_files.append(file_path)
 
-    async def preprocess(self, dpi=300) -> bool:
+    async def preprocess(self, dpi=300) -> str:
         """文档预处理（如格式转换）"""
         """分页提取PDF页面为图像，返回图像路径列表"""
         # 检查是否已提取
@@ -73,8 +76,7 @@ class PDFParser:
         except Exception as e:
             logger.error(f"提取PDF页面失败: {str(e)}")
             raise
-        self.image_paths = self.extract_pages()
-        return True
+        return image_paths
     
     def _calculate_checksum(self, chunk_size: int = 8192) -> str:
         """计算文件校验和（优化大文件处理）"""
@@ -122,22 +124,26 @@ class PDFParser:
         return metadata
     
     
-    async def extract_content(self) -> List[ProcessedContent]:
+    async def extract_content(self):
         """异步提取文件内容"""
-        logger.info(f"使用 {self.process_mode} 模式处理PDF: {self.file_path}")
-        
+        logger.info(f"处理PDF: {self.file_path}")
         try:
-            # 准备页面任务
-            page_tasks = [(i + 1, path) for i, path in enumerate(self.image_paths)]
-            
             # 处理所有页面
-            all_content = await self._pdf_queue_process.process_all(page_tasks)
+            all_content = await self.pdf_model.invoke_file(self.file_path)
             
             return all_content
         except Exception as e:
             logger.error(f"处理PDF内容失败: {str(e)}")
             return []
     
+
+    async def parser(self):
+        file_metadata = self.extract_metadata()
+        img_path = self.preprocess()
+        file_content_data = self.extract_content(img_path)
+
+
+
     def cleanup(self):
         """清理PDF特定资源"""
         # 先调用父类清理临时文件
