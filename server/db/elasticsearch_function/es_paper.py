@@ -63,3 +63,68 @@ class ESPaperStore(ElasticsearchBase):
         }
         res = await self.es_connect.search(index=self.paper_index, body=query)
         return [hit['_source'] for hit in res['hits']['hits']]
+    
+    async def search_hybrid(self, 
+                            text_query: str, 
+                            vector: List[float], 
+                            top_k: int = 5, 
+                            alpha: float = 0.5):
+        """
+        混合检索：Vector (KNN) + BM25 (Text Match)
+        :param alpha: 权重因子 (0.0 - 1.0)。
+                      1.0 表示纯向量搜索，0.0 表示纯文本搜索。
+                      ES 的分数体系不同，这里通过 boost 来简单模拟权重平衡。
+        """
+        # 注意：ES 的 _score 对于向量通常在 [0, 1] 或 [0, 2] 之间，但 BM25 可以很高。
+        # 在 ES 8.x 中，推荐使用 knn 参数与 query 参数并行的方式。
+        
+        # 向量部分的 boost
+        knn_boost = alpha
+        # 文本部分的 boost
+        query_boost = 1.0 - alpha
+        
+        body = {
+            # 1. 向量检索部分
+            "knn": {
+                "field": "vector",
+                "query_vector": vector,
+                "k": top_k,
+                "num_candidates": 100,
+                "boost": knn_boost
+            },
+            # 2. 关键词检索部分 (BM25)
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "match": {
+                                "content": {
+                                    "query": text_query,
+                                    "boost": query_boost
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            # 返回字段
+            "_source": ["paper_id", "chunk_id", "content", "title", "page_num", "metadata", "score"],
+            "size": top_k
+        }
+
+        try:
+            # 使用 search 接口，ES 8 会自动进行混合评分
+            response = await self.es_connect.search(index=self.paper_index, body=body)
+            hits = response['hits']['hits']
+            
+            # 整理返回结果
+            results = []
+            for hit in hits:
+                item = hit['_source']
+                item['_score'] = hit['_score'] # 保留分数以便调试
+                results.append(item)
+            return results
+            
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            return []

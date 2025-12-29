@@ -87,7 +87,6 @@ class PostgresStore(BaseStorage):
                 is_processed=False
             )
             session.add(new_paper)
-            # commit is handled by context manager
 
     async def mark_paper_processed(self, paper_uuid: str):
         async with self.get_session() as session:
