@@ -19,13 +19,16 @@ class ESPaperStore(ElasticsearchBase):
                 "properties": {
                     "paper_id": {"type": "keyword"},
                     "chunk_id": {"type": "keyword"},
-                    "content": {"type": "text", "analyzer": "standard"},
+                    "content": {"type": "text", "analyzer": "standard"}, # 文本内容 / 表格HTML / 图片OCR文字
+                    "content_type": {"type": "keyword"}, # 枚举：text, table, figure, equation, code
                     "vector": {
                         "type": "dense_vector", 
                         "dims": 768, 
                         "index": True, 
                         "similarity": "cosine"
                     },
+                    "image_path": {"type": "keyword"}, # 如果是图片/表格，存储裁剪后的图片路径
+                    "page_num": {"type": "integer"},
                     "create_time": {"type": "date"}
                 }
             }

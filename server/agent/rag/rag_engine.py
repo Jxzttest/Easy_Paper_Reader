@@ -1,7 +1,5 @@
-# 文件位置: src/rag_manager/rag_engine.py
-
 import time
-from typing import List, Dict
+from typing import List, Dict, Optional
 from server.db.db_factory import DBFactory
 from server.model.embedding_model.embedding import EmbeddingManager
 from server.utils.logger import logger
@@ -14,47 +12,61 @@ class RAGEngine:
     def es_store(self):
         return DBFactory.get_es_paper_service()
 
-    async def search(self, query: str, top_k: int = 5, alpha: float = 0.7) -> List[Dict]:
+    async def search(
+        self, 
+        query: str, 
+        paper_id: Optional[str] = None,
+        content_types: Optional[List[str]] = None, # e.g. ['figure', 'table']
+        top_k: int = 5, 
+        alpha: float = 0.7
+    ) -> List[Dict]:
         """
-        执行 RAG 检索
-        :param query: 用户问题
-        :param top_k: 返回片段数量
-        :param alpha: 混合检索权重，0.7 偏向向量，0.3 偏向关键词
+        升级版混合检索
+        :param paper_id: 如果提供，则限定在该论文内搜索
+        :param content_types: 限定搜索内容类型 (text, code, figure, table)
         """
         start_time = time.time()
-        
         try:
-            # 1. 将 Query 转为 Vector
+            # 1. 向量化 Query
             query_vector = await self.embedding_manager.get_embedding(query)
             
-            # 2. 调用 ES 进行混合检索
+            # 2. 构造过滤条件
+            filters = {}
+            if paper_id:
+                filters["paper_id"] = paper_id
+            if content_types:
+                filters["content_type"] = content_types # ES层需支持 terms 查询
+
+            # 3. 调用 ES (假设 es_store.search_hybrid 已经支持 filter 参数)
+            # 你需要在 db_service 里透传 filter 到 ES 的 bool query 中
             results = await self.es_store.search_hybrid(
                 text_query=query,
                 vector=query_vector,
+                filter_dict=filters, 
                 top_k=top_k,
                 alpha=alpha
             )
             
-            cost = (time.time() - start_time) * 1000
-            logger.info(f"RAG Search completed. Query: '{query[:20]}...', Found: {len(results)}, Time: {cost:.2f}ms")
-            
-            return results
+            # 4. 后处理：如果是图片，确保 image_path 存在
+            final_results = []
+            for res in results:
+                item = {
+                    "content": res.get("content"),
+                    "score": res.get("score"),
+                    "type": res.get("content_type"),
+                    "metadata": res.get("metadata", {})
+                }
+                # 如果是图片或表格，带上路径
+                if res.get("content_type") in ["figure", "table"]:
+                    item["image_path"] = res.get("image_path")
+                    # 对于图片，content 主要是 OCR 的文字，可能需要提示 Agent
+                    item["content"] = f"[Figure/Table Content]: {res.get('content')}"
+                
+                final_results.append(item)
+
+            logger.info(f"RAG Search: '{query}' | Types: {content_types} | Found: {len(final_results)}")
+            return final_results
             
         except Exception as e:
-            logger.error(f"RAG search error: {e}")
+            logger.error(f"RAG search error: {e}", exc_info=True)
             return []
-
-    async def get_context_string(self, query: str, top_k: int = 3) -> str:
-        """
-        辅助函数：直接获取拼接好的 Context 字符串，用于给 LLM Prompt
-        """
-        results = await self.search(query, top_k=top_k)
-        
-        context_parts = []
-        for i, res in enumerate(results):
-            # 可以在这里加入 Source 信息
-            source = res.get('title', 'Unknown Source')
-            text = res.get('content', '').strip()
-            context_parts.append(f"[{i+1}] (Source: {source}):\n{text}")
-            
-        return "\n\n".join(context_parts)
