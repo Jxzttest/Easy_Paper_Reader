@@ -98,3 +98,9 @@ class PostgresStore(BaseStorage):
             stmt = select(PaperMetadata).where(PaperMetadata.paper_uuid == paper_uuid)
             result = await session.execute(stmt)
             return result.scalars().first()
+    
+    async def get_recent_papers(self):
+        async with self.get_session() as session:
+            stmt = select(PaperMetadata).where(PaperMetadata.paper_uuid == paper_uuid)
+            result = await session.execute(stmt)
+            return result.scalars().first()

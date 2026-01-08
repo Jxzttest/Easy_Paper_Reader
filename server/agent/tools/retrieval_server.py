@@ -1,10 +1,8 @@
-from mcp.server.fastmcp import FastMCP
+from .. import app
 from server.db.db_factory import DBFactory
 
-# 创建 MCP 服务
-mcp = FastMCP("PaperRetrieval")
 
-@mcp.tool()
+@app.tool()
 async def search_paper_id(query: str) -> str:
     """
     根据论文标题、作者或关键词搜索论文，返回最匹配的 paper_id 和 标题。
@@ -27,12 +25,10 @@ async def search_paper_id(query: str) -> str:
         resp += f"- ID: {r['paper_id']} | Title: {r['title']}\n"
     return resp
 
-@mcp.tool()
+
+@app.tool()
 async def list_available_papers() -> str:
     """列出数据库中最近入库的论文列表"""
     pg_service = DBFactory.get_pg_service()
     papers = await pg_service.get_recent_papers(limit=10)
     return "\n".join([f"ID: {p.paper_uuid} | Title: {p.title}" for p in papers])
-
-if __name__ == "__main__":
-    mcp.run()
