@@ -23,6 +23,8 @@ from langgraph.checkpoint.memory import MemorySaver
 # ==========================================
 TIME_SCALE = 0.1
 
+in_memory_store = InMemoryStore()
+
 # 知识库优化：只记录基本技能，不预判任务类型
 COOKING_KB = {
     "cook_rice": {"agent": "RiceChef", "desc": "煮饭", "time": 100},
@@ -37,20 +39,19 @@ COOKING_KB = {
 # 2. 工具定义 (增强版)
 # ==========================================
 @tool
-async def wash_tool(item: str, time_use: int, store: InMemoryStore = None, 
-                    task_id: str = None, user_id: str = None):
+async def wash_tool(item: str, time_use: int,  task_id: str = None, user_id: str = None):
     """清洗食材。输入食材名称。会自动更新任务状态。"""
     print(f"🌊 [PrepChef] 正在清洗: {item}...")
     
     # 如果是后台任务模式，立即标记为running并返回
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         namespace = ("kitchen", user_id, "tasks")
-        task_item = await store.aget(namespace, task_id)
+        task_item = await in_memory_store.aget(namespace, task_id)
         task = task_item.value
         if task.get("is_background", False):
             task["status"] = "running"
             task["start_time"] = time.time()
-            await store.aput(namespace, task_id, task)
+            await in_memory_store.aput(namespace, task_id, task)
             print(f"🔌 [PrepChef] 启动后台清洗任务: {task_id}")
             return f"已启动后台清洗 {item}，预计需要{time_use}分钟"
     
@@ -59,173 +60,169 @@ async def wash_tool(item: str, time_use: int, store: InMemoryStore = None,
     result = f"{item} 已清洗干净"
     
     # 更新任务状态
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         task["status"] = "done"
         task["result"] = result
         task["end_time"] = time.time()
-        await store.aput(namespace, task_id, task)
+        await in_memory_store.aput(namespace, task_id, task)
     
     return result
 
 @tool
-async def cut_tool(item: str, time_use: int, shape: str = "块", 
-                   store: InMemoryStore = None, task_id: str = None, user_id: str = None):
+async def cut_tool(item: str, time_use: int, shape: str = "块", task_id: str = None, user_id: str = None):
     """切配食材。会自动更新任务状态。"""
     print(f"🔪 [PrepChef] 正在切: {item} -> {shape}...")
     
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         namespace = ("kitchen", user_id, "tasks")
-        task_item = await store.aget(namespace, task_id)
+        task_item = await in_memory_store.aget(namespace, task_id)
         task = task_item.value
         if task.get("is_background", False):
             task["status"] = "running"
             task["start_time"] = time.time()
-            await store.aput(namespace, task_id, task)
+            await in_memory_store.aput(namespace, task_id, task)
             print(f"🔌 [PrepChef] 启动后台切配任务: {task_id}")
             return f"已启动后台切配 {item}，预计需要{time_use}分钟"
     
     await asyncio.sleep(3 * time_use)
     result = f"{item} 已切成{shape}"
     
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         task["status"] = "done"
         task["result"] = result
         task["end_time"] = time.time()
-        await store.aput(namespace, task_id, task)
+        await in_memory_store.aput(namespace, task_id, task)
     
     return result
 
 @tool
-async def cook_rice_tool(amount: str, time_use: int, store: InMemoryStore = None,
+async def cook_rice_tool(amount: str, time_use: int,
                         task_id: str = None, user_id: str = None):
     """煮饭。会自动判断为后台任务。"""
     namespace = ("kitchen", user_id, "tasks")
-    task_item = await store.aget(namespace, task_id)
+    task_item = await in_memory_store.aget(namespace, task_id)
     task = task_item.value
 
     # 1) 立即把状态改成 running 并写回
     task["status"] = "running"
     task["start_time"] = time.time()
-    await store.aput(namespace, task_id, task)
+    await in_memory_store.aput(namespace, task_id, task)
 
     # 2) 启动后台协程去做“长时间”工作
     async def _real_cook() -> None:
         # 真正 sleep 的是这里，但它跑在独立 Task 里
-        await asyncio.sleep(time_use * 60)
+        await asyncio.sleep(time_use * 6)
         # 到点后把状态改 done
         task["status"] = "done"
         task["result"] = f"{amount} 米饭已煮熟"
-        await store.aput(namespace, task_id, task)
+        await in_memory_store.aput(namespace, task_id, task)
         print(f"🔔 [RiceChef] 后台任务完成：{task_id}")
 
     asyncio.create_task(_real_cook())
     
     # 不等待完成，立即返回
+    print(f"🔔 已启动煮{amount}米饭，预计需要{time_use}分钟")
     return f"已启动煮{amount}米饭，预计需要{time_use}分钟"
 
 @tool
-async def boil_tool(item: str, time_use: int,
-                    store: InMemoryStore = None, task_id: str = None, user_id: str = None):
+async def boil_tool(item: str, time_use: int, task_id: str = None, user_id: str = None):
     """焯水/水煮。用于去除血水或煮熟。"""
     print(f"🔥 [WokChef] 正在焯水/水煮: {item}...")
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         namespace = ("kitchen", user_id, "tasks")
-        task_item = await store.aget(namespace, task_id)
+        task_item = await in_memory_store.aget(namespace, task_id)
         task = task_item.value
         if task.get("is_background", False):
             task["status"] = "running"
             task["start_time"] = time.time()
-            await store.aput(namespace, task_id, task)
+            await in_memory_store.aput(namespace, task_id, task)
             print(f"🔌 [PrepChef] 启动后台切配任务: {task_id}")
             return f"已启动后台切配 {result}，预计需要{time_use}分钟"
     
     await asyncio.sleep(4 * time_use)
     result = f"{item} 收汁完成"
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         task["status"] = "done"
         task["result"] = result
         task["end_time"] = time.time()
-        await store.aput(namespace, task_id, task)
+        await in_memory_store.aput(namespace, task_id, task)
     await asyncio.sleep(4 * time_use)
     return result
 
 @tool
-async def fry_tool(item: str, time_use: int,
-                   store: InMemoryStore = None, task_id: str = None, user_id: str = None):
+async def fry_tool(item: str, time_use: int, task_id: str = None, user_id: str = None):
     """煎/炒。用于煸炒出油或煎至金黄。"""
     print(f"🔥 [WokChef] 正在煎炒: {item}...")
     
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         namespace = ("kitchen", user_id, "tasks")
-        task_item = await store.aget(namespace, task_id)
+        task_item = await in_memory_store.aget(namespace, task_id)
         task = task_item.value
         if task.get("is_background", False):
             task["status"] = "running"
             task["start_time"] = time.time()
-            await store.aput(namespace, task_id, task)
+            await in_memory_store.aput(namespace, task_id, task)
             print(f"🔌 [PrepChef] 启动后台切配任务: {task_id}")
             return f"已启动后台切配 {item}，预计需要{time_use}分钟"
     
     await asyncio.sleep(3 * time_use)
     result = f"{item} 煎炒完成"
     
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         task["status"] = "done"
         task["result"] = result
         task["end_time"] = time.time()
-        await store.aput(namespace, task_id, task)
+        await in_memory_store.aput(namespace, task_id, task)
     
     return result
 
 @tool
-async def stew_tool(item: str, time_use: int,
-                    store: InMemoryStore = None, task_id: str = None, user_id: str = None):
+async def stew_tool(item: str, time_use: int, task_id: str = None, user_id: str = None):
     """炖/焖。耗时较长，用于软烂入味。"""
     print(f"🥘 [WokChef] 正在慢炖: {item} (耗时操作)...")
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         namespace = ("kitchen", user_id, "tasks")
-        task_item = await store.aget(namespace, task_id)
+        task_item = await in_memory_store.aget(namespace, task_id)
         task = task_item.value
         if task.get("is_background", False):
             task["status"] = "running"
             task["start_time"] = time.time()
-            await store.aput(namespace, task_id, task)
+            await in_memory_store.aput(namespace, task_id, task)
             print(f"🔌 [PrepChef] 启动后台切配任务: {task_id}")
             return f"已启动后台切配 {item}，预计需要{time_use}分钟"
     
     await asyncio.sleep(10 * time_use)
     result = f"{item} 炖煮完成，软烂入味"
     
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         task["status"] = "done"
         task["result"] = result
         task["end_time"] = time.time()
-        await store.aput(namespace, task_id, task)
+        await in_memory_store.aput(namespace, task_id, task)
     return result
 
 @tool
-async def seasoning_tool(action: str, time_use: int,
-                         store: InMemoryStore = None, task_id: str = None, user_id: str = None):
+async def seasoning_tool(action: str, time_use: int, task_id: str = None, user_id: str = None):
     """调味/勾芡/收汁。"""
     print(f"🧂 [WokChef] 正在{action}...")
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         namespace = ("kitchen", user_id, "tasks")
-        task_item = await store.aget(namespace, task_id)
+        task_item = await in_memory_store.aget(namespace, task_id)
         task = task_item.value
         if task.get("is_background", False):
             task["status"] = "running"
             task["start_time"] = time.time()
-            await store.aput(namespace, task_id, task)
+            await in_memory_store.aput(namespace, task_id, task)
             print(f"🔌 [PrepChef] 启动后台切配任务: {task_id}")
             return f"已启动后台切配 {action}，预计需要{time_use}分钟"
     
     await asyncio.sleep(10 * time_use)
     result = f"{action} 收汁完成"
-    if store and task_id and user_id:
+    if in_memory_store and task_id and user_id:
         task["status"] = "done"
         task["result"] = result
         task["end_time"] = time.time()
-        await store.aput(namespace, task_id, task)
+        await in_memory_store.aput(namespace, task_id, task)
     return f"{action} 完成"
 
 # ==========================================
@@ -274,11 +271,11 @@ class AgentState(TypedDict):
     current_task_id: Annotated[str, lambda a, b: b]  # 新增：当前处理的任务ID
 
 class Task(TypedDict):
-    id: str
-    assignee: str
-    instruction: str
-    duration: int
-    dependencies: List[str]
+    id: str # 任务序列
+    assignee: str # 烹饪类型（agent调用类型）
+    instruction: str # 任务描述
+    duration: int # 持续时间
+    dependencies: List[str] # 任务依赖
     status: Literal["pending", "processing", "running", "done"] # 等待、 制作中、 后台运行、完成
     is_background: bool  # 由Agent决定
     start_time: float
@@ -299,7 +296,7 @@ async def head_chef_node(state: AgentState, config: RunnableConfig, store: InMem
     print(f"👨‍🍳 [总厨] 接单: {user_input}。正在规划...")
 
     prompt = f"""
-    你是一个行政总厨。请将用户需求拆解为 3 个 Agent 的**宏观任务**。
+    你是一个精通统筹的总厨。请生成详细的烹饪计划 JSON。
     参考知识库：
     {kb_text}
     
@@ -309,9 +306,8 @@ async def head_chef_node(state: AgentState, config: RunnableConfig, store: InMem
     3. WokChef: 烹饪（焯、炒、炖、调味/勾芡/收汁）。
     
     【规则】
-    1. 即使是做一道菜，也需要拆分：PrepChef 先备料，WokChef 后烹饪。
-    2. 必须生成 JSON，包含 tasks 列表。每个 task 有 id, assignee, instruction, dependencies。
-    3. 需要列清楚 各个工序的依赖，不可以省略。
+    1. 必须生成 JSON，包含 tasks 列表。每个 task 有 id, assignee, instruction, dependencies。
+    2. 需要列清楚 各个工序的依赖，不可以省略。
     
     示例输出：
     {{
@@ -359,23 +355,31 @@ async def manager_node(state: AgentState, config: RunnableConfig, store: InMemor
     items = await store.asearch(namespace, limit=100)
     all_tasks = {item.key: item.value for item in items}
     
-    # 2. 寻找可分配的任务
+    # 2. 统计谁在忙 (不管是正在接单 processing，还是在后台跑 running)
+    # 这样能保证同一个人不会分身做两件事，但不同的人互不影响
     busy_agents = set()
+    running_background_tasks = []
+    
     for t in all_tasks.values():
         if t["status"] in ["processing", "running"]:
             busy_agents.add(t["assignee"])
+            if t["status"] == "running":
+                running_background_tasks.append(t)
     
     pending_tasks = [t for t in all_tasks.values() if t["status"] == "pending"]
     new_assignments = {}
     
+    # 3. 寻找待办任务
     for t in pending_tasks:
         assignee = t["assignee"]
         
-        # 检查Agent是否空闲
-        if assignee in busy_agents or assignee in new_assignments:
+        # [检查1] 这个人是否在忙？
+        # 如果 RiceChef 在 running，他就是 busy，不能接新活。
+        # 但 PrepChef 不在 busy_agents 里，他可以接活。
+        if assignee in busy_agents:
             continue
         
-        # 检查依赖是否满足
+        # [检查2] 任务依赖是否满足？
         deps_met = True
         for dep_id in t.get("dependencies", []):
             dep_task = all_tasks.get(dep_id)
@@ -384,25 +388,33 @@ async def manager_node(state: AgentState, config: RunnableConfig, store: InMemor
                 break
         
         if deps_met:
+            # 找到一个可以做的任务！
             new_assignments[assignee] = t["id"]
             t["status"] = "processing"
             await store.aput(namespace, t["id"], t)
             print(f"📣 [Manager] 指派: {assignee} -> {t['id']}")
-    
+            
+            # 【关键修改】break！
+            # 找到一个任务就立即停止派发，先去执行这个任务。
+            # 下一个任务等 Manager 下一次被唤醒时再派发。
+            break 
+            
     # 4. 完结判断
     not_done = [t for t in all_tasks.values() if t["status"] != "done"]
     if not not_done:
         return {"assignments": {}, "messages": [BaseMessage(content="ALL_DONE", type="ai")]}
     
-    # 5. 如果有后台任务在运行，等待结束
-    while True:
-        background_running = [t for t in all_tasks.values() 
-                            if t["status"] == "running" or t.get("is_background", True)]
-        if any(background_running):
-            await asyncio.sleep(1 * TIME_SCALE)  # 时间流逝
-        else:
-            # 任务都结束了
-            break
+    # 5. 空转处理
+    # 如果没有派发新任务 (new_assignments为空)
+    if not new_assignments:
+        # 如果有后台任务在跑，说明虽然没派新活，但厨房还在运作，稍微等一下再回来检查
+        if running_background_tasks:
+            await asyncio.sleep(1)
+            return {"assignments": {}, "current_task_id": None}
+            
+        # 既没新活，也没后台跑的，也没完成 -> 可能是依赖卡住了，或者刚启动
+        await asyncio.sleep(1)
+        return {"assignments": {}, "current_task_id": None}
 
     return {"assignments": new_assignments, "current_task_id": None}
 
@@ -430,7 +442,7 @@ async def worker_node(role: str, agent_app: CompiledStateGraph,
         
         # 调用Agent
         agent_response = await agent_app.ainvoke(
-            {"messages": [HumanMessage(content=task["instruction"])]}
+            {"messages": [HumanMessage(content=task["instruction"] + "\n\n" + f"task_id: {my_task_id}, user_id:{user_id}")]}
         )
         
         result = agent_response["messages"][-1].content
@@ -477,7 +489,7 @@ def router(state: AgentState):
 # ==========================================
 # 5. 构建图
 # ==========================================
-in_memory_store = InMemoryStore()
+
 memory_saver = MemorySaver()
 workflow = StateGraph(AgentState)
 
@@ -492,7 +504,7 @@ workflow.add_edge("HeadChef", "Manager")
 
 # 条件路由
 workflow.add_conditional_edges("Manager", router, 
-                               ["RiceChef", "PrepChef", "WokChef", END])
+                               ["RiceChef", "PrepChef", "WokChef", "Manager", END])
 
 # 所有Worker完成后回到Manager
 workflow.add_edge("RiceChef", "Manager")
