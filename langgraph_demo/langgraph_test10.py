@@ -118,18 +118,36 @@ async def cook_rice_tool(amount: str, time_use: int, store: InMemoryStore = None
         await store.aput(namespace, task_id, task)
         print(f"🔔 [RiceChef] 后台任务完成：{task_id}")
 
-    bg_task = asyncio.create_task(_real_cook())
-
+    asyncio.create_task(_real_cook())
     
     # 不等待完成，立即返回
     return f"已启动煮{amount}米饭，预计需要{time_use}分钟"
 
 @tool
-async def boil_tool(item: str, time_use: int):
+async def boil_tool(item: str, time_use: int,
+                    store: InMemoryStore = None, task_id: str = None, user_id: str = None):
     """焯水/水煮。用于去除血水或煮熟。"""
     print(f"🔥 [WokChef] 正在焯水/水煮: {item}...")
+    if store and task_id and user_id:
+        namespace = ("kitchen", user_id, "tasks")
+        task_item = await store.aget(namespace, task_id)
+        task = task_item.value
+        if task.get("is_background", False):
+            task["status"] = "running"
+            task["start_time"] = time.time()
+            await store.aput(namespace, task_id, task)
+            print(f"🔌 [PrepChef] 启动后台切配任务: {task_id}")
+            return f"已启动后台切配 {result}，预计需要{time_use}分钟"
+    
     await asyncio.sleep(4 * time_use)
-    return f"{item} 焯水完成"
+    result = f"{item} 收汁完成"
+    if store and task_id and user_id:
+        task["status"] = "done"
+        task["result"] = result
+        task["end_time"] = time.time()
+        await store.aput(namespace, task_id, task)
+    await asyncio.sleep(4 * time_use)
+    return result
 
 @tool
 async def fry_tool(item: str, time_use: int,
@@ -276,30 +294,32 @@ async def head_chef_node(state: AgentState, config: RunnableConfig, store: InMem
     user_input = state["messages"][-1].content
     user_id = config["configurable"]["thread_id"]
     namespace = ("kitchen", user_id, "tasks")
+    kb_text = json.dumps(COOKING_KB, indent=2, ensure_ascii=False)
     
     print(f"👨‍🍳 [总厨] 接单: {user_input}。正在规划...")
 
     prompt = f"""
-    你是一个精通统筹的总厨。请生成详细的烹饪计划 JSON。
+    你是一个行政总厨。请将用户需求拆解为 3 个 Agent 的**宏观任务**。
     参考知识库：
-    {json.dumps(COOKING_KB, indent=2, ensure_ascii=False)}
+    {kb_text}
     
-    要求：
-    1. 根据经验判断任务类型，比如煮饭通常是后台任务
-    2. 合理设置依赖关系
-    3. 预估时间
+    Agents:
+    1. RiceChef: 煮饭。
+    2. PrepChef: 准备食材（洗、切）。
+    3. WokChef: 烹饪（焯、炒、炖、调味/勾芡/收汁）。
     
-    输出格式：
+    【规则】
+    1. 即使是做一道菜，也需要拆分：PrepChef 先备料，WokChef 后烹饪。
+    2. 必须生成 JSON，包含 tasks 列表。每个 task 有 id, assignee, instruction, dependencies。
+    3. 需要列清楚 各个工序的依赖，不可以省略。
+    
+    示例输出：
     {{
-      "tasks": [
-        {{
-          "id": "t1",
-          "assignee": "RiceChef",
-          "instruction": "煮2碗米饭",
-          "duration": 30,
-          "dependencies": []
-        }}
-      ]
+        "tasks": [
+            {{ "id": "t1", "assignee": "RiceChef", "instruction": "煮2碗饭", "dependencies": [] }},
+            {{ "id": "t2", "assignee": "PrepChef", "instruction": "准备红烧肉用的五花肉(切块)和姜片", "dependencies": [] }},
+            {{ "id": "t3", "assignee": "WokChef", "instruction": "制作红烧肉", "dependencies": ["t2"] }}
+        ]
     }}
     """
     
@@ -374,12 +394,16 @@ async def manager_node(state: AgentState, config: RunnableConfig, store: InMemor
     if not not_done:
         return {"assignments": {}, "messages": [BaseMessage(content="ALL_DONE", type="ai")]}
     
-    # 5. 如果有后台任务在运行，适当等待
-    background_running = [t for t in all_tasks.values() 
-                         if t["status"] == "running" and t.get("is_background", False)]
-    if not new_assignments and not busy_agents and background_running:
-        await asyncio.sleep(1 * TIME_SCALE)  # 时间流逝
-    
+    # 5. 如果有后台任务在运行，等待结束
+    while True:
+        background_running = [t for t in all_tasks.values() 
+                            if t["status"] == "running" or t.get("is_background", True)]
+        if any(background_running):
+            await asyncio.sleep(1 * TIME_SCALE)  # 时间流逝
+        else:
+            # 任务都结束了
+            break
+
     return {"assignments": new_assignments, "current_task_id": None}
 
 # --- Node 3: 通用 Worker (优化版) ---
