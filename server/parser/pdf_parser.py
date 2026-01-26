@@ -8,6 +8,7 @@ import hashlib
 import fitz  # PyMuPDF
 from typing import Dict, Any, List
 # 引入上面修改后的 OCR 类
+from fastapi import HTTPException
 from server.model.ocr_model.paddle_ocr import PaddleOCRPipeline 
 from server.utils.logger import logger
 from server.model.embedding_model.embedding import EmbeddingManager
@@ -192,7 +193,7 @@ class PDFParser:
         except Exception as e:
             logger.error(f"处理失败: {e}", exc_info=True)
             # await pg_store.mark_paper_failed(self.file_uuid) # 建议实现这个方法
-            raise
+            raise HTTPException(status_code=400, detail=str(e))
         finally:
             # 只清理 page_x.png 这种临时中间图，保留裁剪下来的 meaningful 图片
             self.cleanup_temp_images()

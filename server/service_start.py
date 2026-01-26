@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from server.db.db_factory import DBFactory
+from server.parser.parser_api import router as parser_router
+from server.chat_manager.dialogue_manager_api import router as dialogue_manager_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -11,3 +13,5 @@ async def lifespan(app: FastAPI):
     await DBFactory.close_all()
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(parser_router)
+app.include_router(dialogue_manager_router)
