@@ -10,6 +10,68 @@ from server.agent.graph.nodes import (
 )
 from langgraph.prebuilt import ToolNode
 
+
+
+def create_self_correcting_workflow():
+    """创建带自纠正的工作流"""
+    workflow = StateGraph(AgentState)
+    
+    # 添加节点
+    workflow.add_node("Supervisor", enhanced_supervisor_node)
+    workflow.add_node("Researcher", adaptive_researcher_node)
+    workflow.add_node("RAG", self_reflective_rag_node)
+    
+    # 条件路由
+    def dynamic_router(state: AgentState):
+        next_step = state.get("next", "RAG")
+        
+        # 检查是否需要RAG增强
+        if next_step != "RAG" and state.get("needs_factual_check", False):
+            return "RAG"
+            
+        return next_step
+    
+    workflow.add_conditional_edges(
+        "Supervisor",
+        dynamic_router,
+        {
+            "Researcher": "Researcher",
+            "DataAnalyst": "DataAnalyst", 
+            "Coder": "Coder",
+            "RAG": "RAG",
+            "FINISH": END
+        }
+    )
+    
+    # 添加自纠正循环
+    workflow.add_edge("Researcher", "QualityChecker")
+    workflow.add_edge("DataAnalyst", "QualityChecker")
+    workflow.add_edge("Coder", "QualityChecker")
+    
+    def quality_check(state: AgentState):
+        """质量检查节点"""
+        last_message = state["messages"][-1]
+        
+        if needs_factual_verification(last_message):
+            return "RAG"  # 需要事实核查
+        
+        if needs_improvement(last_message):
+            return "Supervisor"  # 需要重新规划
+        
+        return END
+    
+    workflow.add_conditional_edges(
+        "QualityChecker",
+        quality_check,
+        {
+            "RAG": "RAG",
+            "Supervisor": "Supervisor",
+            END: END
+        }
+    )
+    
+    return workflow.compile()
+
 # 创建 ToolNode (用于执行工具调用的通用节点)
 # 注意：不同 Agent 可能使用不同的工具集，这里为了演示简化处理
 # 在实际 A2A 中，通常 Agent 节点如果返回 tool_calls，流向专门的 tool_node
@@ -66,3 +128,5 @@ workflow.add_edge("tools", "Supervisor")
 
 # 编译图
 app = workflow.compile()
+
+

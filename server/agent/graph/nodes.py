@@ -88,3 +88,34 @@ def coder_node(state: AgentState):
     
     result = chain.invoke(state)
     return {"messages": [result]}
+
+
+
+# 增强型Supervisor Node - 支持动态技能发现
+def enhanced_supervisor_node(state: AgentState):
+    # 从技能注册中心获取可用技能
+    available_skills = SkillRegistry.get_all_skills()
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", f"""你是论文阅读助手的主管。根据对话历史和用户问题，决定下一步操作。
+可用的技能: {available_skills}
+如果是精确事实查询，返回 'RAG'
+如果是多步骤任务，选择最合适的技能名称
+如果是简单对话，返回 'FINISH'"""),
+        MessagesPlaceholder(variable_name="messages")
+    ])
+    
+    # 使用结构化输出确保路由准确性
+    class RouteDecision(TypedDict):
+        next: str
+        confidence: float
+        needed_skills: List[str]
+    
+    chain = prompt | llm.with_structured_output(RouteDecision)
+    decision = chain.invoke(state)
+    
+    return {
+        "next": decision["next"],
+        "confidence": decision["confidence"],
+        "needed_skills": decision["needed_skills"]
+    }

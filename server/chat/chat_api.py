@@ -138,32 +138,42 @@ def self_reflective_rag_workflow(query: str) -> str:
 # 4. FastAPI 主接口
 # ==========================================
 
-@app.post("/api/v1/chat", response_model=ChatResponse)
+@router.post("/api/v1/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
-    # A: 用户输入新问题
-    print(f"\n--- 新会话 [{request.session_id}] --- 用户问题: {request.query}")
+    # 初始化技能（可热加载）
+    await initialize_skills()
     
-    # 模拟从 ES 加载历史对话
-    history = MOCK_ES_HISTORY.get(request.session_id, [])
+    # 加载或创建对话状态
+    state = await load_conversation_state(request.session_id)
     
-    # B & C: 意图识别与路由分发
-    task_type = recognize_intent(request.query, history)
+    # 更新状态
+    state["messages"].append(HumanMessage(content=request.query))
     
-    # 分支执行 D 或 E
-    if task_type == "AGENT":
-        final_answer = agent_workflow(request.query, history)
-    else:
-        final_answer = self_reflective_rag_workflow(request.query)
-        
-    # F: 更新对话状态，写入 ES (模拟)
-    history.append({"user": request.query, "assistant": final_answer})
-    MOCK_ES_HISTORY[request.session_id] = history
+    # 执行工作流
+    final_state = await app.ainvoke(state)
     
-    # G: 返回给前端，前端判断是否继续对话
+    # 提取回答
+    last_message = final_state["messages"][-1]
+    answer = extract_answer(last_message)
+    
+    # 保存状态
+    await save_conversation_state(request.session_id, final_state)
+    
     return ChatResponse(
-        answer=final_answer,
-        workflow_type=task_type
+        answer=answer,
+        workflow_type=final_state.get("workflow_type", "RAG"),
+        session_state=final_state.get("session_data", {})
     )
+
+async def initialize_skills():
+    """动态初始化技能"""
+    # 扫描skills目录
+    skills_dir = "server/agent/skills"
+    for file in os.listdir(skills_dir):
+        if file.endswith(".py"):
+            module_name = f"server.agent.skills.{file[:-3]}"
+            importlib.import_module(module_name)
+
 
 if __name__ == "__main__":
     import uvicorn
