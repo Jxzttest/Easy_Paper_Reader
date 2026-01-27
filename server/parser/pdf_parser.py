@@ -72,6 +72,7 @@ class PDFParser:
                     "page_count": len(doc),
                     "is_encrypted": doc.is_encrypted
                 })
+                
         except Exception as e:
             logger.error(f"提取PDF元数据失败: {str(e)}")
             metadata["title"] = os.path.basename(self.file_path)
