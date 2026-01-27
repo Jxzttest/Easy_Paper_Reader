@@ -118,12 +118,3 @@ class PaddleOCRPipeline:
             return full_path # 实际生产中这里应该上传到 OSS/S3 并返回 URL
         except Exception:
             return ""
-
-# 测试代码
-if __name__ == "__main__":
-    async def main():
-        ocr = PaddleOCRPipeline()
-        # 假设有一个 temp 文件夹
-        res = await ocr.invoke_single_img("test_pdf_page.png", "temp_output")
-        print(res)
-    # asyncio.run(main())
