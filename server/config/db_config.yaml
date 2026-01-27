@@ -1,28 +1,11 @@
 postgresql:
-  users:
-    host: localhost
-    port: 8994
-    db_name: users
-    user: root
-    password: helloworld123
-    pool_size: 10
-    timeout: 5000
-  paper_metadata:
-    host: localhost
-    port: 8994
-    db_name: paper_metadata
-    user: root
-    password: helloworld123
-    pool_size: 10
-    timeout: 5000
-  conversations:
-    host: localhost
-    port: 8994
-    db_name: conversations
-    user: root
-    password: helloworld123
-    pool_size: 10
-    timeout: 5000
+  host: localhost
+  port: 5432
+  db_name: root
+  user: root
+  password: helloworld123
+  pool_size: 10
+  timeout: 5000
   
 elasticsearch:
   host: localhost
