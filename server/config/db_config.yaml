@@ -1,0 +1,38 @@
+postgresql:
+  users:
+    host: localhost
+    port: 8994
+    db_name: users
+    user: root
+    password: helloworld123
+    pool_size: 10
+    timeout: 5000
+  paper_metadata:
+    host: localhost
+    port: 8994
+    db_name: paper_metadata
+    user: root
+    password: helloworld123
+    pool_size: 10
+    timeout: 5000
+  conversations:
+    host: localhost
+    port: 8994
+    db_name: conversations
+    user: root
+    password: helloworld123
+    pool_size: 10
+    timeout: 5000
+  
+elasticsearch:
+  host: localhost
+  port: 9200
+  index: my_index
+  timeout: 3000
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+  password: null
+  pool_size: 5
+  timeout: 2000
