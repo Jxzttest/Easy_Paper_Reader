@@ -1,5 +1,6 @@
 import yaml
 import pathlib
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.future import select
 from sqlalchemy import update, delete
@@ -69,8 +70,8 @@ class PostgresStore(BaseStorage):
             await session.commit()
         except Exception as e:
             await session.rollback()
-            logger.error(f"Database transaction error: {e}")
-            raise
+            logger.error(f"事务执行错误: {e}")
+            raise HTTPException(status_code=500, detail=f"事务执行错误： {e}")
         finally:
             await session.close()
 
@@ -82,6 +83,7 @@ class PostgresStore(BaseStorage):
                 username=username
             )
             session.add(new_user)
+        logger.info(f"[db] create_user执行成功, user_uuid={user_uuid}")
 
     async def add_paper_metadata(self, paper_uuid: str, title: str, uploader_uuid: str, file_path: str, **kwargs):
         logger.info(f"[db] 开始add_paper_metadata, paper_uuid={paper_uuid}, title={title}, uploader_uuid={uploader_uuid}")
@@ -95,12 +97,14 @@ class PostgresStore(BaseStorage):
                 **kwargs
             )
             session.add(new_paper)
+        logger.info(f"[db] add_paper_metadata执行成功, paper_uuid={paper_uuid}")
 
     async def mark_paper_processed(self, paper_uuid: str):
         logger.info(f"[db] 开始mark_paper_processed, paper_uuid={paper_uuid}")
         async with self.get_session() as session:
             stmt = update(PaperMetadata).where(PaperMetadata.paper_uuid == paper_uuid).values(is_processed=True)
             await session.execute(stmt)
+        logger.info(f"[db] mark_paper_processed执行成功, paper_uuid={paper_uuid}")
 
     async def get_paper_metadata(self, paper_uuid: str):
         logger.info(f"[db] 开始get_paper_metadata, paper_uuid={paper_uuid}")
@@ -108,6 +112,7 @@ class PostgresStore(BaseStorage):
             stmt = select(PaperMetadata).where(PaperMetadata.paper_uuid == paper_uuid)
             result = await session.execute(stmt)
             return result.scalars().first()
+        logger.info(f"[db] get_paper_metadata执行成功, paper_uuid={paper_uuid}")
     
     async def get_recent_papers(self, paper_uuid: str):
         logger.info(f"[db] 开始get_recent_papers, paper_uuid={paper_uuid}")
@@ -115,3 +120,4 @@ class PostgresStore(BaseStorage):
             stmt = select(PaperMetadata).where(PaperMetadata.paper_uuid == paper_uuid)
             result = await session.execute(stmt)
             return result.scalars().first()
+        logger.info(f"[db] get_recent_papers执行成功, paper_uuid={paper_uuid}")
