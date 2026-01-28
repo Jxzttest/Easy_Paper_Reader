@@ -23,7 +23,7 @@ class ESPaperStore(ElasticsearchBase):
                     "content_type": {"type": "keyword"}, # 枚举：text, table, figure, equation, code
                     "vector": {
                         "type": "dense_vector", 
-                        "dims": 768, 
+                        "dims": 1024, 
                         "index": True, 
                         "similarity": "cosine"
                     },
@@ -41,13 +41,19 @@ class ESPaperStore(ElasticsearchBase):
     async def add_paper_chunk(self, 
                               paper_id: str, 
                               chunk_id: str, 
-                              content: str, 
+                              content: str,
+                              content_type: str,
+                              image_path: str,
+                              page_num: int,
                               vector: List[float], 
                               metadata: Dict = None):
         doc = {
             "paper_id": paper_id,
             "chunk_id": chunk_id,
             "content": content,
+            "content_type": content_type,
+            "image_path": image_path,
+            "page_num": page_num,
             "vector": vector,
             "metadata": metadata or {},
             "create_time": datetime.datetime.now().isoformat()

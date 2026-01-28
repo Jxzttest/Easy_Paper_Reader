@@ -2,6 +2,7 @@ import asyncio
 import os
 import cv2
 import numpy as np
+import json
 from typing import List, Dict, Any
 from paddleocr import PPStructureV3
 from server.utils.logger import logger
@@ -35,26 +36,75 @@ class PaddleOCRPipeline:
     def __init__(self, use_gpu: bool = False):
         self.use_gpu = use_gpu
         # 初始化 PP-Structure
-        # table=False 表示不单独做复杂的表格结构还原(省资源)，如果需要精确表格数据设为 True
-        # layout=True 开启版面分析
-        self._engine = PPStructureV3(show_log=False, image_orientation=False, layout=True, table=True, use_gpu=use_gpu, lang='ch',
+        self._engine = PPStructureV3(lang='ch',ocr_version="PP-OCRv5",
                                      use_doc_orientation_classify=True,
+                                     use_table_recognition=True,
                                      use_doc_unwarping=True,
-                                     use_textline_orientation=True)
+                                     use_textline_orientation=True,
+                                     use_region_detection=True,
+                                     device="gpu" if use_gpu else "cpu")
 
-    async def invoke_single_img(self, img_path: str, output_dir: str) -> List[Dict[str, Any]]:
+    async def invoke_single_img(self, img_path: str, output_dir: str = "", paper_index: int = 1) -> List[Dict[str, Any]]:
         """
         处理单张图片，返回版面分析后的元素列表
         output_dir: 用于保存裁剪下来的图片（图表、表格截图）
         """
         loop = asyncio.get_running_loop()
         # 在线程池中运行 CPU 密集型任务
-        return await loop.run_in_executor(None, self._predict_sync, img_path, output_dir)
+        return await loop.run_in_executor(None, self._predict_sync, img_path, output_dir, paper_index)
+        
     
-    def _predict_sync(self, img_path: str, output_dir: str) -> List[Dict[str, Any]]:
+    def _predict_sync(self, img_path: str, output_dir: str = "", paper_index: int = 1) -> List[Dict[str, Any]]:
         res = self._engine.predict(img_path)
-        logger.info(f"结果存储至 {output_dir}")
-        res.save_to_json(save_path=output_dir)
+        # logger.info(f"结果存储至 {output_dir}")
+
+        # for r in res:
+        #     ocr_result = r.json
+        #     print(r.markdown)
+        #     logger.info(f"第 {paper_index} 页 OCR 结果: {ocr_result}")
+            # self.save_json(paper_index, ocr_result, output_dir)
+        result_list = []
+        for r in res:
+            result_dict = r.json.get("res", {})
+            for index, parsing_result in enumerate(result_dict["parsing_res_list"]):
+                if parsing_result['block_label'] in ['image', 'table']:
+                    # 裁剪图片保存路径
+                    img_path_saved = self._save_crop_img(img_path, parsing_result['block_bbox'], output_dir, f"paper{paper_index}_block_{index}")
+                    parsing_result['image_path'] = img_path_saved
+            result_list.append(result_dict)
+        return result_list
+    
+    def _save_crop_img(self, img_path: str, bbox: List[int], output_dir: str, name_prefix: str) -> str:
+        """裁剪并保存图片"""
+        try:
+            img = cv2.imread(img_path)
+            if img is None:
+                return ""
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            # 边界检查
+            h, w = img.shape[:2]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            
+            crop_img = img[y1:y2, x1:x2]
+            if crop_img.size == 0:
+                return ""
+                
+            os.makedirs(output_dir, exist_ok=True)
+            rel_path = f"{name_prefix}.jpg"
+            full_path = os.path.join(output_dir, rel_path)
+            cv2.imwrite(full_path, crop_img)
+            return full_path # 实际生产中这里应该上传到 OSS/S3 并返回 URL
+        except Exception as e:
+            logger.error(f"保存裁剪图片失败: {str(e)}")
+            return ""
+
+    def save_json(self, idx, ocr_result, output_dir: str):
+        os.makedirs(output_dir, exist_ok=True)
+        json_path = os.path.join(output_dir, f"page_{idx+1}_structure.json")
+        json.dump(ocr_result, open(json_path, "w", encoding="utf-8"), ensure_ascii=False, indent=4)
+        logger.info(f"结构化结果已保存至 {json_path}")
+        return output_dir
         
 
     # def _predict_sync(self, img_path: str, output_dir: str) -> List[Dict[str, Any]]:

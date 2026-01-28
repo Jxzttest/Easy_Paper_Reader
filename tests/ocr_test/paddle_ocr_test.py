@@ -1,4 +1,7 @@
 import os
+import os
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["FLAGS_use_cinn"] = "0"
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import fitz  # PyMuPDF
@@ -31,12 +34,14 @@ def extract_metadata(file_path, dpi=300) -> Dict[str, Any]:
 
 
 async def main():
-    pdf_path = "/DATA/llm_xuzhentao/Easy_Paper_Reader/A Survey of Context Engineering for Large.pdf"
-    extract_metadata(pdf_path)
+    # pdf_path = "/DATA/llm_xuzhentao/Easy_Paper_Reader/Zero-Shot Chain-of-Thought Reasoning Guided by Evolutionary.pdf"
+    # extract_metadata(pdf_path)
     parser = PaddleOCRPipeline()
-    for img_path in image_paths:
-        await parser.invoke_single_img(img_path, output_dir=output_folder)
+    # for index, img_path in enumerate(image_paths):
+    #     await parser.invoke_single_img(img_path, output_dir=output_folder, paper_index=index)
+    img_path = "/DATA/llm_xuzhentao/Easy_Paper_Reader/tests/ocr_test/output_images/page_2.png"
+    await parser.invoke_single_img(img_path, output_dir=output_folder, paper_index=0)
 
-if main() == "__main__":
+if __name__ == "__main__":
     import asyncio
     asyncio.run(main())

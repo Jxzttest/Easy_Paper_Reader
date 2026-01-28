@@ -13,7 +13,7 @@ class EmbeddingManager:
     async def get_embedding(self, text: str) -> List[float]:
         """
         生成文本向量。
-        这里使用随机向量作为占位符 (维度 768)。
+        这里使用随机向量作为占位符 (维度 1024)。
         """
         # 模拟延时
         # await asyncio.sleep(0.01)
@@ -21,4 +21,4 @@ class EmbeddingManager:
         # 真实场景示例:
         # return self.model.encode(text).tolist()
         
-        return np.random.rand(768).tolist()
+        return np.random.rand(1024).tolist()

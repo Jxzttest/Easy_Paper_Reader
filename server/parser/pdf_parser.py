@@ -132,48 +132,28 @@ class PDFParser:
                 page_structure = await self.ocr_model.invoke_single_img(img_path, self.assets_dir)
                 
                 for i, item in enumerate(page_structure):
-                    content = item['content']
-                    c_type = item['type'] # text, table, figure...
-                    img_path_saved = item['image_path'] # 如果是 table/figure，这是路径
-                    
-                    # --- 文本向量化策略 ---
-                    # 1. 如果是图片/表格，content 可能是空或者简单的 OCR 描述。
-                    #    为了能检索到它，我们把 "Figure of [OCR content]" 放入向量。
-                    # 2. 如果是 Text，且太长，需要切片。
-                    
-                    text_to_embed = content
-                    if c_type in ['figure', 'table']:
-                        text_to_embed = f"[{c_type}] {content}" # 增加类型标识帮助语义理解
-
-                    # 简单的切分逻辑（针对长文本段落）
-                    # 注意：表格(html)通常不切分，直接存，除非超过 Token 限制
-                    sub_chunks = [content]
-                    if c_type == 'text' and len(content) > 500:
-                         sub_chunks = self.text_splitter(content)
-
-                    for sub_idx, chunk_text in enumerate(sub_chunks):
-                        if not chunk_text.strip():
+                    parsing_res = item['parsing_res_list']
+                    for res in parsing_res:
+                        chunk_id = f"{self.file_uuid}_p{page_num}_s{i}"
+                        chunk_text = res['block_content']
+                        c_type = res['block_label'] # text, table, figure...
+                        if c_type not in ['text', 'formula', 'figure', 'table', 'image', 'figure_title']:
                             continue
-                            
-                        # 生成向量
-                        # 注意：如果是图片，我们是对图片的 OCR 描述文字进行 Embedding
+                        # 表格 、 图片会做裁剪，保存路径在 res['image_path']
+                        img_path_saved = res.get('image_path', '')
                         vector = await self.embedding_model.get_embedding(chunk_text)
-                        
-                        chunk_id = f"{self.file_uuid}_p{page_num}_s{i}_c{sub_idx}"
                         
                         # 构造 ES 存入数据
                         task = es_store.add_paper_chunk(
                             paper_id=self.file_uuid,
                             chunk_id=chunk_id,
-                            content=chunk_text,
+                            content=res['block_content'],
                             content_type=c_type,
-                            image_path=img_path_saved,
+                            image_path= img_path_saved,
                             vector=vector,
-                            title=paper_title,
                             page_num=page_num,
                             metadata={
-                                "source": metadata['file_name'],
-                                "original_bbox": item['bbox']
+                                "original_bbox": item['block_bbox']
                             }
                         )
                         chunk_tasks.append(task)
@@ -193,7 +173,6 @@ class PDFParser:
 
         except Exception as e:
             logger.error(f"处理失败: {e}", exc_info=True)
-            # await pg_store.mark_paper_failed(self.file_uuid) # 建议实现这个方法
             raise HTTPException(status_code=400, detail=str(e))
         finally:
             # 只清理 page_x.png 这种临时中间图，保留裁剪下来的 meaningful 图片
