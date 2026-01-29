@@ -37,8 +37,7 @@ class RAGEngine:
             if content_types:
                 filters["content_type"] = content_types # ES层需支持 terms 查询
 
-            # 3. 调用 ES (假设 es_store.search_hybrid 已经支持 filter 参数)
-            # 你需要在 db_service 里透传 filter 到 ES 的 bool query 中
+            # 3.
             results = await self.es_store.search_hybrid(
                 text_query=query,
                 vector=query_vector,
@@ -110,9 +109,9 @@ class SelfReflectiveRAG(RAGEngine):
         
         # 使用LLM评估相关性
         evaluation_prompt = f"""评估以下检索结果与查询的相关性:
-查询: {query}
-结果: {results[:3]}
-请给出0-1的相关性评分，只返回数字:"""
+        查询: {query}
+        结果: {results[:3]}
+        请给出0-1的相关性评分，只返回数字:"""
         
         try:
             response = await mock_llm_call(evaluation_prompt)  # 替换为真实LLM调用

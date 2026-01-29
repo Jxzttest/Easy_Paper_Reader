@@ -139,7 +139,7 @@ class ESPaperStore(ElasticsearchBase):
                 }
             },
             # 返回字段
-            "_source": ["paper_id", "chunk_id", "content", "title", "page_num", "metadata", "score"],
+            "_source": ["paper_id", "chunk_id", "content", "page_num", "metadata"],
             "size": top_k
         }
 

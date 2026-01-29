@@ -7,7 +7,7 @@ from sqlalchemy import update, delete
 from contextlib import asynccontextmanager
 
 from server.db.base_storage import BaseStorage
-from server.db.postgresql_function.models import Base, User, PaperMetadata
+from server.db.postgresql_function.models import Base, User, PaperMetadata, Conversation
 from server.utils.logger import logger
 
 class PostgresStore(BaseStorage):
@@ -121,3 +121,27 @@ class PostgresStore(BaseStorage):
             result = await session.execute(stmt)
             return result.scalars().first()
         logger.info(f"[db] get_recent_papers执行成功, paper_uuid={paper_uuid}")
+    
+    async def add_new_chat(self, user_uuid: str, session_id: str, start_time):
+        logger.info(f"[db] 开始add_new_chat, user_uuid={user_uuid}, session_id={session_id}, start_time={start_time}")
+        async with self.get_session() as session:
+            new_chat = Conversation(
+                session_id=session_id,
+                user_uuid=user_uuid,
+                title="",
+                start_time=start_time,
+            )
+            session.add(new_chat)
+        logger.info(f"[db] add_new_chat执行成功, user_uuid={user_uuid}, session_id={session_id}, start_time={start_time}")
+    
+    async def change_chat_title(self, user_uuid: str, session_id: str, title: str):
+        async with self.get_session() as session:
+            stmt = update(Conversation).where(Conversation.user_uuid == user_uuid and Conversation.session_id == session_id).values(title=title)
+            result = await session.execute(stmt)
+
+    async def delete_chat(self, user_uuid: str, session_id: str):
+        async with self.get_session() as session:
+            stmt = select(Conversation).delete(Conversation.user_uuid == user_uuid and Conversation.session_id == session_id)
+            session.delete
+            result = await session.execute(stmt)
+

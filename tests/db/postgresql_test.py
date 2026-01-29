@@ -8,6 +8,7 @@ async def main():
     await postgresdb.initialize()
     await postgresdb.create_user(user_uuid="user-uuid-5678", username="testuser")
     await postgresdb.add_paper_metadata(paper_uuid="test-uuid-1234", title="Test Paper", uploader_uuid="user-uuid-5678", file_path="/path/to/test_paper.pdf")
+    await postgresdb.
 
 if __name__ == "__main__":
     asyncio.run(main())
