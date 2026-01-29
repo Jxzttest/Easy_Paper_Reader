@@ -131,14 +131,14 @@ class PDFParser:
                 # 结果是 List[Dict] (type, content, image_path, bbox)
                 page_structure = await self.ocr_model.invoke_single_img(img_path, self.assets_dir)
                 
-                for i, item in enumerate(page_structure):
+                for paper_index, item in enumerate(page_structure):
                     parsing_res = item['parsing_res_list']
-                    for res in parsing_res:
-                        chunk_id = f"{self.file_uuid}_p{page_num}_s{i}"
+                    for chunk_index, res in enumerate(parsing_res):
                         chunk_text = res['block_content']
                         c_type = res['block_label'] # text, table, figure...
                         if c_type not in ['text', 'formula', 'figure', 'table', 'image', 'figure_title']:
                             continue
+                        chunk_id = f"{self.file_uuid}_p{paper_index}_{c_type}_{chunk_index}"
                         # 表格 、 图片会做裁剪，保存路径在 res['image_path']
                         img_path_saved = res.get('image_path', '')
                         vector = await self.embedding_model.get_embedding(chunk_text)

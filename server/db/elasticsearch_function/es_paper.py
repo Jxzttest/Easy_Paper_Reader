@@ -6,6 +6,11 @@ from typing import List, Dict, Optional
 from server.db.elasticsearch_function.es_base import ElasticsearchBase
 from server.utils.logger import logger
 
+# """
+# chunk id 内容为 f"{file_uuid}_p{paper_index}_{c_type}_{chunk_index}"
+# """
+
+
 class ESPaperStore(ElasticsearchBase):
     storage_name = "es_paper"
 
@@ -60,7 +65,7 @@ class ESPaperStore(ElasticsearchBase):
         }
         await self.es_connect.index(index=self.paper_index, document=doc)
 
-    async def search_similar(self, vector: List[float], top_k: int = 3):
+    async def search_similar(self, vector: List[float], top_k: int = 20):
         query = {
             "knn": {
                 "field": "vector",
@@ -73,10 +78,27 @@ class ESPaperStore(ElasticsearchBase):
         res = await self.es_connect.search(index=self.paper_index, body=query)
         return [hit['_source'] for hit in res['hits']['hits']]
     
+    async def count_chunks_by_file(self, paper_id: str) -> int:
+        """
+        快速返回某篇论文的 chunk 总数
+        """
+        body = {"query": {"term": {"paper_id": paper_id}}}
+        resp = await self.es_connect.count(index=self.paper_index, body=body)
+        return resp["count"]
+
+    async def search_paper_chunks(self, paper_id: str, size: int = 100):
+        """
+        快速返回某篇论文的所有chunk
+        """
+        count = await self.count_chunks_by_file(paper_id)
+        body = {"query": {"term": {"paper_id": paper_id}}, "size": size if count < size else count}
+        resp = await self.es_connect.search(index=self.paper_index, body=body)
+        return [hit['_source'] for hit in resp['hits']['hits']]
+    
     async def search_hybrid(self, 
                             text_query: str, 
                             vector: List[float], 
-                            top_k: int = 5, 
+                            top_k: int = 20, 
                             alpha: float = 0.5):
         """
         混合检索：Vector (KNN) + BM25 (Text Match)

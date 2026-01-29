@@ -51,7 +51,7 @@ services:
           "-U",
           "${PGUSER:-postgres}",
           "-d",
-          "${POSTGRES_DB:-dify}",
+          "${POSTGRES_DB:-root}",
         ]
       interval: 1s
       timeout: 3s
@@ -65,8 +65,8 @@ services:
       - ./elasticsearch/docker-entrypoint.sh:/docker-entrypoint-mount.sh
     environment:
       ELASTIC_PASSWORD: ${ELASTICSEARCH_PASSWORD:-elastic}
-      cluster.name: dify-es-cluster
-      node.name: dify-es0
+      cluster.name: es-cluster
+      node.name: es0
       discovery.type: single-node
       xpack.license.self_generated.type: basic
       xpack.security.enabled: 'false'

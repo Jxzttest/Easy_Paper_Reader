@@ -28,7 +28,7 @@ class ElasticsearchBase(BaseStorage):
         config_path = pathlib.Path(__file__).parent.parent.parent.parent / "server/config/db_config.yaml"
         try:
             with open(config_path, 'r', encoding='utf-8') as file:
-                self.config_dict = yaml.safe_load(file)['es']
+                self.config_dict = yaml.safe_load(file)['elasticsearch']
         except Exception as e:
             logger.error(f"ES Config load failed: {e}")
             raise
@@ -36,7 +36,7 @@ class ElasticsearchBase(BaseStorage):
     def _init_client(self):
         try:
             ip = self.config_dict['ip']
-            passwd = self.config_dict['passwd']
+            passwd = self.config_dict['password']
             user = self.config_dict['user']
             verify_certs = self.config_dict.get('verify_certs', False)
 

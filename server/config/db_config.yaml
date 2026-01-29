@@ -8,10 +8,11 @@ postgresql:
   timeout: 5000
   
 elasticsearch:
-  host: localhost
-  port: 9200
-  paper_index: paper_index
-  chat_index: chat_index
+  ip: 'http://127.0.0.1:9200'
+  user: "elastic"
+  password: "elastic"
+  paper_index: "paper_index"
+  chat_index: "chat_index"
   timeout: 3000
   body:
     paper_body:
