@@ -23,6 +23,7 @@ class ESChatStore(ElasticsearchBase):
                 "properties": {
                     "user_id": {"type": "keyword"},
                     "session_id": {"type": "keyword"},
+                    "message_id": {"type": "keyword"},
                     "chat_message": {"type": "text", "analyzer": "standard"},
                     "is_user": {"type": "boolean"},
                     "timestamp": {"type": "date" }
@@ -118,148 +119,7 @@ class ESChatStore(ElasticsearchBase):
         except Exception as e:
             logger.error(f"Add message failed: {e}")
             raise HTTPException(status_code=500, detail=f"Add message failed: {str(e)}")
-
-    async def add_tool_call_result(
-        self,
-        message_id: str,
-        tool_call_id: str,
-        tool_output: str,
-        status: str = "success",
-        error: Optional[str] = None,
-        **kwargs
-    ):
-        """更新tool调用的结果"""
-        try:
-            # 查找消息
-            search_response = await self.es_connect.search(
-                index=self.messages_index,
-                body={
-                    "query": {
-                        "term": {"message_id": message_id}
-                    }
-                }
-            )
-            
-            if not search_response['hits']['hits']:
-                raise ValueError(f"Message not found: {message_id}")
-            
-            doc = search_response['hits']['hits'][0]
-            current_tool_calls = doc['_source'].get('tool_calls', [])
-            
-            # 更新对应的tool调用
-            updated = False
-            for i, tool in enumerate(current_tool_calls):
-                if tool.get('tool_call_id') == tool_call_id:
-                    current_tool_calls[i].update({
-                        "tool_output": tool_output,
-                        "status": status,
-                        "tool_error": error,
-                        "end_time": datetime.datetime.utcnow().isoformat(),
-                        **kwargs
-                    })
-                    updated = True
-                    break
-            
-            if updated:
-                await self.es_connect.update(
-                    index=self.messages_index,
-                    id=doc['_id'],
-                    body={
-                        "doc": {
-                            "tool_calls": current_tool_calls,
-                            "status": "completed"
-                        }
-                    },
-                    refresh=True
-                )
-            else:
-                logger.warning(f"Tool call {tool_call_id} not found in message {message_id}")
-                
-        except Exception as e:
-            logger.error(f"Update tool call failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Update tool call failed: {str(e)}")
-    
-    async def get_conversation_thread(
-        self,
-        user_id: str,
-        session_id: str,
-        thread_id: Optional[str] = None,
-        limit: int = 100
-    ) -> List[Dict]:
-        """获取对话线程（支持多线程对话）"""
-        query = {
-            "query": {
-                "bool": {
-                    "must": [
-                        {"term": {"user_id": user_id}},
-                        {"term": {"session_id": session_id}}
-                    ]
-                }
-            },
-            "sort": [{"timestamp": {"order": "asc"}}],
-            "size": limit
-        }
-        
-        if thread_id:
-            query["query"]["bool"]["must"].append({"term": {"thread_id": thread_id}})
-        
-        try:
-            res = await self.es_connect.search(index=self.messages_index, body=query)
-            return [hit['_source'] for hit in res['hits']['hits']]
-        except Exception as e:
-            logger.error(f"Get conversation thread failed: {e}")
-            return []
-    
-    async def get_tool_calls_statistics(
-        self,
-        user_id: str,
-        start_time: Optional[str] = None,
-        end_time: Optional[str] = None
-    ) -> Dict:
-        """获取tool调用的统计信息"""
-        query = {
-            "query": {
-                "bool": {
-                    "must": [
-                        {"term": {"user_id": user_id}},
-                        {"exists": {"field": "tool_calls"}}
-                    ]
-                }
-            },
-            "aggs": {
-                "by_tool_name": {
-                    "terms": {"field": "tool_calls.tool_name.keyword", "size": 100}
-                },
-                "by_status": {
-                    "terms": {"field": "tool_calls.status.keyword"}
-                },
-                "avg_duration": {
-                    "avg": {"field": "tool_calls.duration_ms"}
-                },
-                "total_calls": {
-                    "value_count": {"field": "tool_calls.tool_call_id.keyword"}
-                }
-            }
-        }
-        
-        # 添加时间范围过滤
-        if start_time and end_time:
-            query["query"]["bool"]["filter"] = {
-                "range": {
-                    "timestamp": {
-                        "gte": start_time,
-                        "lte": end_time
-                    }
-                }
-            }
-        
-        try:
-            res = await self.es_connect.search(index=self.messages_index, body=query)
-            return res.get('aggregations', {})
-        except Exception as e:
-            logger.error(f"Get tool statistics failed: {e}")
-            return {}
-    
+   
     async def search_messages(
         self,
         user_id: str,

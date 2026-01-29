@@ -23,61 +23,44 @@ elasticsearch:
       mappings:
         properties:
           paper_id: {"type": "keyword"}
+          chunk_id:
+            type: keyword
           title: {"type": "text"}
-          authors: {"type": "text"}
-          abstract: {"type": "text"}
-          content: {"type": "text"}
-          sections: {"type": "nested"}
-    message_body:
-      mappings:
-        properties:
-          # 基础信息
-          message_id:
-            type: keyword
-          user_id:
-            type: keyword
-          session_id:
-            type: keyword
-          parent_message_id:
-            type: keyword  # 用于消息链追踪
-          thread_id:
-            type: keyword   # 用于区分对话中的不同线程/分支
-          
-          # 消息内容
-          role:
-            type: keyword  # user, assistant, system, function, tool, agent
-          content:
-            type: text
-            fields:
-              keyword:
-                type: keyword
-              vector:
-                type: dense_vector  # 如果需要进行语义搜索
-                dims: 768
-          
-          # 结构化内容
+          content: {"type": "text", "analyzer": "standard"}
           content_type:
-            type: keyword  # text, code, image, file, thought, action
-          content_format:
-            type: keyword  # markdown, json, plain_text, etc.
-          
-          # 元数据
-          timestamp:
-            type: date
-          source:
-            type: keyword  # web, api, mobile, etc.
-          
-          # Agent相关
-          agent_id:
             type: keyword
-          agent_name:
-            type: keyword
-          agent_type:
-            type: keyword  # llm, retrieval, calculator, etc.
-          agent_config:
+          vector:
+            type: "dense_vector"
+            dims: 1024 
+            index: true 
+            similarity: "cosine"
+          metadata:
             type: object
             dynamic: true
-          
+          create_time: 
+            type: keyword
+    agent_body:
+      mappings:
+        properties:
+          message_id:
+            type: keyword # 某次对话中产生的agent调用情况
+          source_task_id:
+            type: keyword
+          task_id:
+            type: keyword # 任务id
+          # Agent相关
+          agent_calls:
+            type: nested
+            properties:
+              agent_id:
+                type: keyword
+              agent_name:
+                type: keyword
+              agent_type:
+                type: keyword  # llm, retrieval, calculator, etc.
+              agent_config:
+                type: object
+                dynamic: true
           # Tool调用相关
           tool_calls:
             type: nested
@@ -106,22 +89,6 @@ elasticsearch:
               metadata:
                 type: object
                 dynamic: true
-          
-          # 推理过程/思维链
-          reasoning_steps:
-            type: nested
-            properties:
-              step_id:
-                type: keyword
-              step_type:
-                type: keyword  # observation, thought, action, result
-              content:
-                type: text
-              timestamp:
-                type: date
-              confidence:
-                type: float
-          
           # 性能指标
           tokens_used:
             type: integer
@@ -129,51 +96,42 @@ elasticsearch:
             type: integer
           completion_tokens:
             type: integer
-          cost_estimate:
-            type: float
           latency_ms:
             type: long
-          
           # 状态和标记
           status:
             type: keyword  # pending, processing, completed, failed, cancelled
-          is_deleted:
-            type: boolean
-          flags:
-            type: keyword  # important, archived, reviewed, etc.
-          
-          # 引用和关联
-          references:
-            type: nested
-            properties:
-              ref_type:
-                type: keyword  # document, code, url, message, etc.
-              ref_id:
-                type: keyword
-              ref_name:
-                type: keyword
-              confidence:
-                type: float
-          
-          # 自定义字段
           metadata:
             type: object
             dynamic: true
-          custom_fields:
-            type: object
-            dynamic: true
-          
-          # 版本控制
-          version:
-            type: integer
           created_by:
             type: keyword
-          
-          # 搜索优化
-          search_vector:
-            type: text  # 用于全文搜索的预处理文本
-            analyzer: "ik_max_word"
-            search_analyzer: "ik_smart"
+
+    message_body:
+      mappings:
+        properties:
+          # 基础信息
+          message_id:
+            type: keyword
+          user_id:
+            type: keyword
+          session_id:
+            type: keyword
+          parent_message_id:
+            type: keyword  # 用于消息链追踪
+      
+          # 消息内容
+          role:
+            type: keyword  # user, assistant, system, function, tool, agent
+          content:
+            type: text
+            fields:
+              keyword:
+                type: keyword
+
+          timestamp:
+            type: date
+
 redis:
   host: localhost
   port: 6379
