@@ -42,6 +42,8 @@ elasticsearch:
     agent_body:
       mappings:
         properties:
+          user_id:
+            type: keyword
           message_id:
             type: keyword # 某次对话中产生的agent调用情况
           source_task_id:
@@ -104,8 +106,6 @@ elasticsearch:
           metadata:
             type: object
             dynamic: true
-          created_by:
-            type: keyword
 
     message_body:
       mappings:

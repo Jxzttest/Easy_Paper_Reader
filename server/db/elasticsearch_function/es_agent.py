@@ -20,7 +20,7 @@ class ESAgentStore(ElasticsearchBase):
             "mappings": {
                 "properties": {
                     "message_id": {"type": "keyword"},
-                    
+
                     "timestamp": {"type": "date" }
                 }
             }
@@ -29,6 +29,29 @@ class ESAgentStore(ElasticsearchBase):
 
     async def initialize(self):
         await self._create_index_if_not_exists(self.agent_index, self.agent_body)
+
+    async def add_agent_info_first_log(self,
+                                       user_uuid: str,
+                                       message_id: str,
+                                       source_task_id: str, # task 来源
+                                       task_id: str # 当前task id
+                                       ):
+        
+        document = {
+            "user_id": user_uuid,
+            "message_id": message_id,
+            "source_task_id": source_task_id,
+            "task_id": task_id,
+            "agent_calls": [],
+            "tool_calls": [],
+            "tokens_used": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "latency_ms": 0,
+            "status": "pending",
+            "metadata": {},
+        }
+        
 
 
     async def get_tool_calls_statistics(

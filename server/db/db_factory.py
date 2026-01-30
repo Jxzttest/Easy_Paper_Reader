@@ -6,6 +6,7 @@ from typing import Optional
 # 导入具体的服务类
 from server.db.elasticsearch_function.es_chat import ESChatStore
 from server.db.elasticsearch_function.es_paper import ESPaperStore
+from server.db.elasticsearch_function.es_agent import ESAgentStore
 from server.db.redis_function.redis_function import RedisMiddleware
 from server.db.postgresql_function.postgresql_function import PostgresStore
 from server.utils.logger import logger
@@ -15,6 +16,7 @@ class DBFactory:
     数据库工厂类 (Singleton Pattern)
     负责统一管理数据库服务的实例，避免重复创建连接。
     """
+    _es_agent: Optional[ESAgentStore] = None
     _es_chat: Optional[ESChatStore] = None
     _es_paper: Optional[ESPaperStore] = None
     _redis: Optional[RedisMiddleware] = None
@@ -63,6 +65,12 @@ class DBFactory:
             # 懒加载兜底，但推荐在 main.py startup 中显式调用 init_all
             cls._es_chat = ESChatStore() 
         return cls._es_chat
+
+    @classmethod
+    def get_es_agent_service(cls) -> ESAgentStore:
+        if not cls._es_agent:
+            cls._es_agent = ESAgentStore()
+        return cls._es_agent
 
     @classmethod
     def get_es_paper_service(cls) -> ESPaperStore:

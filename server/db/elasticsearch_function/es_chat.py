@@ -25,7 +25,6 @@ class ESChatStore(ElasticsearchBase):
                     "session_id": {"type": "keyword"},
                     "message_id": {"type": "keyword"},
                     "chat_message": {"type": "text", "analyzer": "standard"},
-                    "is_user": {"type": "boolean"},
                     "timestamp": {"type": "date" }
                 }
             }
@@ -34,81 +33,28 @@ class ESChatStore(ElasticsearchBase):
 
     async def initialize(self):
         await self._create_index_if_not_exists(self.messages_index, self.message_body)
-        
 
     async def add_message(
         self,
-        user_id: str,
+        user_uuid: str,
         session_id: str,
         role: str,
         content: str,
         parent_message_id: Optional[str] = None,
-        agent_info: Optional[Dict] = None,
-        tool_calls: Optional[List[Dict]] = None,
-        reasoning_steps: Optional[List[Dict]] = None,
-        **kwargs
     ) -> str:
         """添加消息到对话中，支持agent和tool调用记录"""
-        message_id = str(uuid.uuid4())
+        message_id = "chat_message_" + str(uuid.uuid4())
         timestamp = datetime.datetime.utcnow().isoformat()
         
         message_data = {
             "message_id": message_id,
-            "user_id": user_id,
+            "user_id": user_uuid,
             "session_id": session_id,
             "parent_message_id": parent_message_id,
             "role": role,
             "content": content,
             "timestamp": timestamp,
-            "content_type": kwargs.get("content_type", "text"),
-            "content_format": kwargs.get("content_format", "plain_text"),
-            "status": kwargs.get("status", "completed"),
-            "search_vector": content,  # 用于全文搜索
         }
-        
-        # 添加agent信息
-        if agent_info:
-            message_data.update({
-                "agent_id": agent_info.get("agent_id"),
-                "agent_name": agent_info.get("agent_name"),
-                "agent_type": agent_info.get("agent_type"),
-                "agent_config": agent_info.get("config", {})
-            })
-        
-        # 添加tool调用信息
-        if tool_calls:
-            processed_tools = []
-            for tool in tool_calls:
-                processed_tool = {
-                    "tool_call_id": tool.get("tool_call_id", str(uuid.uuid4())),
-                    "tool_name": tool.get("tool_name"),
-                    "tool_params": tool.get("params", {}),
-                    "tool_input": tool.get("input"),
-                    "tool_output": tool.get("output"),
-                    "tool_error": tool.get("error"),
-                    "start_time": tool.get("start_time", timestamp),
-                    "end_time": tool.get("end_time"),
-                    "duration_ms": tool.get("duration_ms"),
-                    "status": tool.get("status", "completed"),
-                    "metadata": tool.get("metadata", {})
-                }
-                processed_tools.append(processed_tool)
-            message_data["tool_calls"] = processed_tools
-        
-        # 添加推理步骤
-        if reasoning_steps:
-            message_data["reasoning_steps"] = reasoning_steps
-        
-        # 添加性能指标
-        if "tokens_used" in kwargs:
-            message_data["tokens_used"] = kwargs["tokens_used"]
-        if "latency_ms" in kwargs:
-            message_data["latency_ms"] = kwargs["latency_ms"]
-        
-        # 添加自定义字段
-        if "metadata" in kwargs:
-            message_data["metadata"] = kwargs["metadata"]
-        
         try:
             await self.es_connect.index(
                 index=self.messages_index,
@@ -122,7 +68,7 @@ class ESChatStore(ElasticsearchBase):
    
     async def search_messages(
         self,
-        user_id: str,
+        user_uuid: str,
         query: str,
         fields: List[str] = ["content", "search_vector"],
         session_id: Optional[str] = None,
@@ -136,7 +82,7 @@ class ESChatStore(ElasticsearchBase):
             "query": {
                 "bool": {
                     "must": [
-                        {"term": {"user_id": user_id}},
+                        {"term": {"user_id": user_uuid}},
                         {
                             "multi_match": {
                                 "query": query,
@@ -184,7 +130,7 @@ class ESChatStore(ElasticsearchBase):
         except Exception as e:
             logger.error(f"Search messages failed: {e}")
             return []
-    
+
     async def get_message_tree(
         self,
         message_id: str,
@@ -246,3 +192,24 @@ class ESChatStore(ElasticsearchBase):
             # 递归处理子节点
             await self._build_message_tree(child_node, depth - 1)
     
+    async def delete_message(self, user_uuid: str, message_id: str):
+        try:
+            response = await self.es_connect.delete_by_query(index=self.messages_index,
+                                                            body={
+                                                                "query": {
+                                                                    "bool": {
+                                                                        "filter": [
+                                                                            {"term": {"user_id": user_uuid}},
+                                                                            {"term": {"message_id": message_id}}
+                                                                        ]
+                                                                    }
+                                                                }
+                                                            })
+        except Exception as e:
+            logger.info(f"对话{user_uuid}_{message_id}删除失败 Error occurred: {e}")
+            raise HTTPException(status_code=400, detail={"result": f"对话{user_uuid}_{message_id}删除失败"})
+        if response["deleted"] > 0:
+            return "success"
+        else:
+            logger.info(f"对话{user_uuid}_{message_id}删除失败 Error occurred")
+            raise HTTPException(status_code=400, detail={"result": f"对话{user_uuid}_{message_id}删除失败"})

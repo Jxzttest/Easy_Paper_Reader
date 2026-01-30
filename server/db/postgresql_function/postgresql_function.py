@@ -98,6 +98,11 @@ class PostgresStore(BaseStorage):
             )
             session.add(new_paper)
         logger.info(f"[db] add_paper_metadata执行成功, paper_uuid={paper_uuid}")
+    
+    async def delete_paper_metadata(self, paper_uuid: str):
+        async with self.get_session() as session:
+            stmt = delete(PaperMetadata).where(PaperMetadata.paper_uuid == paper_uuid)
+            await session.execute(stmt)
 
     async def mark_paper_processed(self, paper_uuid: str):
         logger.info(f"[db] 开始mark_paper_processed, paper_uuid={paper_uuid}")
@@ -138,10 +143,11 @@ class PostgresStore(BaseStorage):
         async with self.get_session() as session:
             stmt = update(Conversation).where(Conversation.user_uuid == user_uuid and Conversation.session_id == session_id).values(title=title)
             result = await session.execute(stmt)
+            return result.scalars().first()
 
     async def delete_chat(self, user_uuid: str, session_id: str):
         async with self.get_session() as session:
-            stmt = select(Conversation).delete(Conversation.user_uuid == user_uuid and Conversation.session_id == session_id)
-            session.delete
+            stmt = delete(Conversation).where(Conversation.user_uuid == user_uuid and Conversation.session_id == session_id)
             result = await session.execute(stmt)
+            return result.scalars().first()
 
