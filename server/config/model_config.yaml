@@ -1,0 +1,9 @@
+llm:
+  url: http://localhost:8390/v1
+  headers: ""
+  api_key: "123456"
+  model_name: "Qwen3-30B-A3B"
+embedding:
+  url: http://localhost:8900/v1
+  headers: ""
+  api_key: "123456"

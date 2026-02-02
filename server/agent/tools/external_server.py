@@ -1,6 +1,6 @@
-from .. import app
+from langchain.tools import tool
 
-@app.async_tool()
+@tool
 async def get_impact_factor(journal_name: str) -> str:
     """(工具 7) 查询期刊的影响因子"""
     # 这里可以接入真实 API，或者模拟数据

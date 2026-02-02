@@ -1,12 +1,11 @@
 import os
 from typing import List
-from .. import app
+from langchain.tools import tool
 from server.model.llm_model.llm_function import _internal_llm_process
 # 引入你的数据库工厂
 from server.db.db_factory import DBFactory
 
-
-@app.async_tool()
+@tool
 async def explain_paper_summary(paper_id: str) -> str:
     """
     (工具 1, 5) 读取论文的摘要、引言和结论，生成全文概括和创新点总结。
@@ -22,7 +21,7 @@ async def explain_paper_summary(paper_id: str) -> str:
     return await _internal_llm_process(prompt, context)
 
 
-@app.async_tool()
+@tool
 async def explain_code_snippet(paper_id: str) -> str:
     """
     (工具 2) 提取论文中的代码段或伪代码进行解释。
@@ -39,7 +38,7 @@ async def explain_code_snippet(paper_id: str) -> str:
     return await _internal_llm_process(prompt, context)
 
 
-@app.async_tool()
+@tool
 async def explain_structure_figure(paper_id: str, query: str = "structure diagram") -> str:
     """
     (工具 3) 寻找并解释论文中的结构图/架构图。
@@ -65,7 +64,7 @@ async def explain_structure_figure(paper_id: str, query: str = "structure diagra
     return f"[系统提示：已找到图片 {img_path}]。图注内容为：{ocr_caption}。请告知用户图片已找到，并根据图注解释：这张图展示了..."
 
 
-@app.async_tool()
+@tool
 async def compare_papers_innovation(paper_id_list: List[str]) -> str:
     """
     (工具 4, 6) 对比两篇或多篇论文的创新点差异。
@@ -83,7 +82,7 @@ async def compare_papers_innovation(paper_id_list: List[str]) -> str:
     return await _internal_llm_process(prompt, combined_context)
 
 
-@app.async_tool()
+@tool
 async def critique_user_idea(user_idea: str, reference_paper_ids: List[str]) -> str:
     """
     (工具 8) 基于给定的参考论文，评估用户的创新点，并提出修改建议。
