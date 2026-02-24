@@ -1,8 +1,11 @@
 
+import sys
+sys.path.append("/data/code/Easy_Paper_Reader/")
+
 import asyncio
 import os
 import json
-import pandas as pd
+import numpy as np
 from server.agent.rag.rag_engine import RAGEngine
 from server.db.elasticsearch_function.es_paper import ESPaperStore
 
@@ -10,7 +13,7 @@ def get_embedding():
     return np.random.rand(1024).tolist()
 
 def test_paper_function():
-    test_paper_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ocr_test/output_images")
+    test_paper_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ocr_test/output_images")
     result_list = []
 
     pages = []
@@ -49,7 +52,7 @@ async def main():
             vector = get_embedding()
             
             # 构造 ES 存入数据
-            task = es_paper_store.add_paper_chunk(
+            task = await es_paper_store.add_paper_chunk(
                 paper_id=file_uuid,
                 chunk_id=chunk_id,
                 content=chunk_text,
@@ -66,7 +69,8 @@ async def main():
     query = "请帮我总结一下这篇文章的主要贡献是什么？"
     response = await rag_engine.search(query, paper_id=file_uuid, content_types=["text", "figure"])
     print(f"RAG Engine Response: {response}")
-    es_paper_store.clear_paper_chunks(file_uuid)
+    await es_paper_store.clear_paper_chunks(file_uuid)
+    await es_paper_store.clear_all()
 
 if __name__ == "__main__":
     asyncio.run(main())

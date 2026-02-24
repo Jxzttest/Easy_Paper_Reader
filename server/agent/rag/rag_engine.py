@@ -47,7 +47,6 @@ class RAGEngine:
             results = await self.es_store.search_hybrid(
                 text_query=query,
                 vector=query_vector,
-                filter_dict=filters, 
                 top_k=top_k,
                 alpha=alpha
             )
