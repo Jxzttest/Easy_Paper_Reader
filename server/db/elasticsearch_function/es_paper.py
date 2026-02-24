@@ -144,7 +144,7 @@ class ESPaperStore(ElasticsearchBase):
         }
 
         try:
-            # 使用 search 接口，ES 8 会自动进行混合评分
+            # 使用 search 接口
             response = await self.es_connect.search(index=self.paper_index, body=body)
             hits = response['hits']['hits']
             
@@ -159,3 +159,16 @@ class ESPaperStore(ElasticsearchBase):
         except Exception as e:
             logger.error(f"Hybrid search failed: {e}")
             return []
+    
+    async def clear_paper_chunks(self, paper_id: str):
+        """
+        删除某篇论文的所有chunk
+        """
+        query = {"query": {"term": {"paper_id": paper_id}}}
+        await self.es_connect.delete_by_query(index=self.paper_index, body=query)
+    
+    async def clear_all(self):
+        """
+        清空整个索引，慎用！
+        """
+        await self.es_connect.indices.delete(index=self.paper_index, ignore=[400, 404])

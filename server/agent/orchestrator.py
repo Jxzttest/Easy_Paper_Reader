@@ -1,6 +1,6 @@
-from agents.info_agent import InfoAgent
-from agents.plan_agent import PlanAgent
-from agents.budget_agent import BudgetAgent
+from server.agent.info_agent import InfoAgent
+from server.agent.plan_agent import PlanAgent
+from server.agent.budget_agent import BudgetAgent
 
 class Orchestrator:
     """中心化编排器 - 系统的指挥中枢"""
