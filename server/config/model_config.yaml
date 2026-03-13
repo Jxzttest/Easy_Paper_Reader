@@ -1,9 +1,45 @@
-llm:
-  url: http://localhost:8390/v1
-  headers: ""
-  api_key: "123456"
-  model_name: "Qwen3-30B-A3B"
-embedding:
-  url: http://localhost:8900/v1
-  headers: ""
-  api_key: "123456"
+models:
+  # 1. 本地部署的 PaddleOCR
+  - name: "paddle_ocr_v5"
+    type: "ocr"               # 模型类型：llm, ocr, embedding, reranker
+    mode: "local"             # 运行模式：local / api
+    provider: "paddle"        # 供应商或框架名称
+    kwargs:                   # 注入到模型初始化的专属参数
+      use_gpu: true
+      lang: "ch"
+      ocr_version: "PP-OCRv5"
+      use_doc_orientation_classify: true
+      use_table_recognition: true
+      use_doc_unwarping: true
+      use_textline_orientation: true
+      use_region_detection: true
+
+  # 2. 云端 API 方式的 LLM
+  - name: "gpt-4o"
+    type: "llm"
+    mode: "api"
+    provider: "openai"
+    api_key: "sk-xxxxxx"      # 也可以从环境变量读取，例如 ${OPENAI_API_KEY}
+    base_url: "https://api.openai.com/v1"
+    kwargs:
+      model_name: "gpt-4o"
+      temperature: 0.7
+      max_tokens: 2048
+
+  # 3. 本地部署的 Embedding 模型
+  - name: "bge-m3-local"
+    type: "embedding"
+    mode: "local"
+    provider: "huggingface"
+    kwargs:
+      model_path: "/data/models/bge-m3"
+      device: "cuda"
+
+  # 4. API 方式的 Reranker 模型
+  - name: "bge-reranker-api"
+    type: "reranker"
+    mode: "api"
+    provider: "siliconflow"
+    api_key: "sk-xxxx"
+    kwargs:
+      model_name: "BAAI/bge-reranker-v2-m3"
