@@ -1,76 +1,85 @@
-import time
-from typing import List, Dict, Optional
-from server.db.db_factory import DBFactory
-from server.model.embedding_model.embedding import EmbeddingManager
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+RAGEngine (SimpleRAG) —— 标准单次检索
+
+流程：
+  1. 向量化 query → ChromaDB 混合检索
+  2. 评估检索质量
+  3. 质量足够 → 生成答案
+  4. 质量不足 → 触发 DeepSearchRAG（多跳）
+"""
+
+from typing import Dict, List, Optional
+
+from server.rag.base_rag import BaseRAG, RetrievalResult
 from server.utils.logger import logger
 
-class RAGEngine:
-    tool_id = "rag hybrid tool"
+QUALITY_THRESHOLD = 0.55   # 低于此分触发 DeepSearch
 
-    def __init__(self):
-        self.embedding_manager = EmbeddingManager()
-    
-    @property
-    def es_store(self):
-        return DBFactory.get_es_paper_service()
-    
-    @property
-    def processing_store(self):
-        return DBFactory.get_es_agent_service()
 
-    async def search(
-        self, 
-        query: str, 
-        paper_id: Optional[str] = None,
-        content_types: Optional[List[str]] = None, # e.g. ['figure', 'table']
-        top_k: int = 5, 
-        alpha: float = 0.7
-    ) -> List[Dict]:
+class RAGEngine(BaseRAG):
+    """
+    对外统一入口。
+    简单问题走 SimpleRAG；复杂/低质量问题自动升级 DeepSearchRAG。
+    """
+
+    async def retrieve(
+        self,
+        query: str,
+        paper_uuids: Optional[List[str]] = None,
+        top_k: int = 8,
+    ) -> RetrievalResult:
+        paper_id = paper_uuids[0] if paper_uuids and len(paper_uuids) == 1 else None
+        chunks = await self._search_chunks(query, paper_id, top_k)
+        score = await self._evaluate_quality(query, chunks)
+        return RetrievalResult(chunks=chunks, query=query, score=score)
+
+    async def answer(
+        self,
+        query: str,
+        paper_uuids: Optional[List[str]] = None,
+        content_types: Optional[List[str]] = None,
+        top_k: int = 8,
+    ) -> Dict:
         """
-        升级版混合检索
-        :param paper_id: 如果提供，则限定在该论文内搜索
-        :param content_types: 限定搜索内容类型 (text, code, figure, table)
+        自适应检索入口：
+          - 先做简单检索
+          - 质量低 → 自动切换 DeepSearchRAG
         """
-        start_time = time.time()
-        try:
-            # 1. 向量化 Query
-            query_vector = await self.embedding_manager.get_embedding(query)
-            
-            # 2. 构造过滤条件
-            filters = {}
-            if paper_id:
-                filters["paper_id"] = paper_id
-            if content_types:
-                filters["content_type"] = content_types # ES层需支持 terms 查询
+        logger.info(f"[RAGEngine] query='{query[:50]}...'")
 
-            # 3.
-            results = await self.es_store.search_hybrid(
-                text_query=query,
-                vector=query_vector,
-                top_k=top_k,
-                alpha=alpha
-            )
-            
-            # 4. 后处理：如果是图片，确保 image_path 存在
-            final_results = []
-            for res in results:
-                item = {
-                    "content": res.get("content"),
-                    "score": res.get("score"),
-                    "type": res.get("content_type"),
-                    "metadata": res.get("metadata", {})
-                }
-                # 如果是图片或表格，带上路径
-                if res.get("content_type") in ["figure", "table"]:
-                    item["image_path"] = res.get("image_path")
-                    # 对于图片，content 主要是 OCR 的文字，可能需要提示 Agent
-                    item["content"] = f"[Figure/Table Content]: {res.get('content')}"
-                
-                final_results.append(item)
+        retrieval = await self.retrieve(query, paper_uuids, top_k)
+        logger.info(f"[RAGEngine] quality_score={retrieval.quality_score:.2f}, chunks={len(retrieval.chunks)}")
 
-            logger.info(f"RAG Search: '{query}' | Types: {content_types} | Found: {len(final_results)}")
-            return final_results
-            
-        except Exception as e:
-            logger.error(f"RAG search error: {e}", exc_info=True)
-            return []
+        # 质量不足，升级到 DeepSearch
+        if retrieval.quality_score < QUALITY_THRESHOLD or retrieval.is_empty():
+            logger.info("[RAGEngine] low quality → escalate to DeepSearchRAG")
+            from server.rag.deepsearch_rag import DeepSearchRAG
+            deep = DeepSearchRAG()
+            return await deep.answer(query, paper_uuids=paper_uuids, top_k=top_k)
+
+        answer_text = await self._generate_answer(query, retrieval)
+
+        # 整理来源（过滤 content_types）
+        sources = []
+        for c in retrieval.chunks:
+            if content_types and c.get("content_type") not in content_types:
+                continue
+            sources.append({
+                "chunk_id":    c.get("chunk_id", ""),
+                "content":     c["content"][:300],
+                "content_type": c.get("content_type", "text"),
+                "page_num":    c.get("page_num"),
+                "image_path":  c.get("image_path", ""),
+                "score":       round(c.get("score", 0.0), 4),
+            })
+
+        return {
+            "answer":             answer_text,
+            "sources":            sources,
+            "retrieval_attempts": 1,
+            "quality_score":      retrieval.quality_score,
+            "mode":               "simple",
+        }
