@@ -1,114 +1,156 @@
-from server.agent.info_agent import InfoAgent
-from server.agent.plan_agent import PlanAgent
-from server.agent.budget_agent import BudgetAgent
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-class Orchestrator:
-    """中心化编排器 - 系统的指挥中枢"""
-    
+"""
+AgentOrchestrator —— 多 Agent 协同编排引擎
+
+流程：
+  1. SupervisorAgent 识别意图 → 生成执行计划（Agent 列表）
+  2. 按顺序执行各子 Agent，共享同一个 AgentContext
+  3. CheckAgent 评估结果：
+       - passed → 流程结束，汇总答案
+       - failed + 重试次数未超限 → SupervisorAgent 重规划 → 继续执行
+  4. 整个过程通过 AsyncGenerator 流式向外推送事件，
+     供 SSE 接口实时推送给前端
+
+事件格式（JSON Lines）：
+  {"event": "plan",    "data": {"intent": "...", "plan": [...]}}
+  {"event": "agent",   "data": {"name": "...", "status": "running"}}
+  {"event": "result",  "data": {"name": "...", "summary": "..."}}
+  {"event": "check",   "data": {"passed": true, "score": 0.9}}
+  {"event": "replan",  "data": {"new_plan": [...]}}
+  {"event": "answer",  "data": {"content": "...", "sources": [...]}}
+  {"event": "error",   "data": {"message": "..."}}
+"""
+
+import asyncio
+import json
+from typing import AsyncGenerator, Dict, List, Optional
+
+from server.agent.base import AgentContext
+from server.agent.supervisor_agent import SupervisorAgent
+from server.agent.rag_agent import RAGAgent
+from server.agent.writing_agent import WritingAgent
+from server.agent.translation_agent import TranslationAgent
+from server.agent.check_agent import CheckAgent
+from server.utils.logger import logger
+
+MAX_RETRY = 2   # CheckAgent 失败后最多重规划次数
+
+# Agent 注册表
+_AGENT_REGISTRY = {
+    "rag_agent":         RAGAgent,
+    "writing_agent":     WritingAgent,
+    "translation_agent": TranslationAgent,
+    "check_agent":       CheckAgent,
+}
+
+
+def _event(name: str, data: Dict) -> str:
+    return json.dumps({"event": name, "data": data}, ensure_ascii=False)
+
+
+class AgentOrchestrator:
+    """
+    AgentOrchestrator 是无状态的，每次对话调用 run() 创建新的执行流。
+    Agent 实例在 Orchestrator 内部按需创建（轻量，无连接资源）。
+    """
+
     def __init__(self):
-        # 初始化智能体池
-        self.agents = {
-            'info': InfoAgent(),
-            'plan': PlanAgent(),
-            'budget': BudgetAgent()
-        }
-        print("✅ 编排器初始化完成，智能体池已加载")
-    
-    def execute_task(self, context):
-        """执行任务的主要方法"""
-        intent = context.get('current_intent')
-        entities = context.get('entities', {})
-        task_memory = context.get('task_memory', {})
-        
-        print(f"\n🎯 开始执行任务: {intent}")
-        print(f"📋 实体信息: {entities}")
-        
-        agent_logs = []
-        results = {}
-        steps_completed = []
-        
-        # 根据意图规划任务流
-        if intent == 'travel_planning':
-            # 任务1: 信息查询
-            print("\n1️⃣ 调度信息查询智能体...")
-            info_result = self.agents['info'].execute(
-                task="查询目的地信息",
-                params={
-                    'destination': entities.get('destination'),
-                    'theme': entities.get('theme', '文化')
-                },
-                context=context
-            )
-            agent_logs.append(info_result.get('log', {}))
-            results['destination_info'] = info_result.get('data', {})
-            steps_completed.append('info_query')
-            
-            # 任务2: 行程规划
-            print("\n2️⃣ 调度行程规划智能体...")
-            plan_result = self.agents['plan'].execute(
-                task="生成详细行程",
-                params={
-                    'destination': entities.get('destination'),
-                    'days': entities.get('days', 3),
-                    'theme': entities.get('theme', '文化'),
-                    'destination_info': results['destination_info']
-                },
-                context=context
-            )
-            agent_logs.append(plan_result.get('log', {}))
-            results['travel_plan'] = plan_result.get('plan', {})
-            steps_completed.append('plan_generation')
-            
-            # 任务3: 预算分析
-            print("\n3️⃣ 调度预算分析智能体...")
-            budget_result = self.agents['budget'].execute(
-                task="分析旅行预算",
-                params={
-                    'destination': entities.get('destination'),
-                    'days': entities.get('days', 3),
-                    'budget': entities.get('budget'),
-                    'travel_plan': results['travel_plan']
-                },
-                context=context
-            )
-            agent_logs.append(budget_result.get('log', {}))
-            results['budget_analysis'] = budget_result.get('analysis', {})
-            steps_completed.append('budget_analysis')
-            
-            # 生成最终输出
-            final_output = self._generate_final_output(results, entities)
-            
-        else:
-            # 其他意图处理
-            final_output = "我目前主要专注于旅行规划任务。"
-        
-        return {
-            'final_output': final_output,
-            'agent_logs': agent_logs,
-            'results': results,
-            'steps_completed': steps_completed
-        }
-    
-    def _generate_final_output(self, results, entities):
-        """生成最终回复"""
-        destination = entities.get('destination', '目的地')
-        days = entities.get('days', 3)
-        
-        output = f"""🌍 {destination} {days}天旅行规划完成！
+        self.supervisor = SupervisorAgent()
 
-📌 目的地特色：{results.get('destination_info', {}).get('highlights', '')}
+    async def run(
+        self,
+        ctx: AgentContext,
+        user_input: str,
+    ) -> AsyncGenerator[str, None]:
+        """
+        流式执行 Agent 流程，通过 AsyncGenerator 推送事件。
+        调用方 async for event in orchestrator.run(ctx, input) 即可。
+        """
+        ctx.add_message("user", user_input)
 
-🗓️ 行程安排：
-{results.get('travel_plan', {}).get('itinerary', '暂无行程')}
+        # ── Step 1: Supervisor 规划 ────────────────────────────────────
+        try:
+            sup_result = await self.supervisor.execute(ctx, user_input=user_input)
+        except Exception as e:
+            yield _event("error", {"message": f"Supervisor 规划失败：{e}"})
+            return
 
-💰 预算分析：
-{results.get('budget_analysis', {}).get('summary', '暂无预算分析')}
+        plan: List[str] = sup_result["plan"]
+        intent: str = sup_result["intent"]
+        yield _event("plan", {"intent": intent, "plan": plan})
 
-📝 温馨提示：
-1. 以上信息仅供参考，实际价格可能有所变动
-2. 建议提前预订酒店和门票
-3. 根据天气情况调整行程安排
+        # ── Step 2: 按计划执行子 Agent（支持重规划）───────────────────
+        retry_count = 0
+        remaining_plan = list(plan)
+        ctx.shared_memory["completed_agents"] = []
 
-祝您旅途愉快！✈️"""
-        
-        return output
+        while remaining_plan:
+            agent_name = remaining_plan.pop(0)
+
+            # 跳过不认识的 Agent 名（防御性处理）
+            if agent_name not in _AGENT_REGISTRY and agent_name != "supervisor_agent":
+                logger.warning(f"[Orchestrator] unknown agent: {agent_name}, skip")
+                continue
+
+            yield _event("agent", {"name": agent_name, "status": "running"})
+
+            try:
+                agent = _AGENT_REGISTRY[agent_name]()
+                result = await agent.execute(ctx)
+            except Exception as e:
+                yield _event("error", {"message": f"{agent_name} 执行失败：{e}"})
+                # 非 CheckAgent 失败直接中止
+                if agent_name != "check_agent":
+                    return
+                result = {"passed": False, "score": 0.0, "issue": str(e), "summary": ""}
+
+            ctx.shared_memory["completed_agents"].append(agent_name)
+            yield _event("result", {"name": agent_name, "summary": result.get("summary", "")})
+
+            # ── CheckAgent 后处理 ──────────────────────────────────
+            if agent_name == "check_agent":
+                passed = result.get("passed", True)
+                score = result.get("score", 1.0)
+                yield _event("check", {"passed": passed, "score": score, "issue": result.get("issue", "")})
+
+                if not passed and retry_count < MAX_RETRY:
+                    retry_count += 1
+                    logger.info(f"[Orchestrator] check failed (retry {retry_count}/{MAX_RETRY}), replanning...")
+                    new_plan = await self.supervisor.replan(ctx, result)
+                    remaining_plan = new_plan
+                    yield _event("replan", {"new_plan": new_plan, "retry": retry_count})
+                # passed 或超限：继续到流程结束
+
+        # ── Step 3: 汇总最终答案 ──────────────────────────────────────
+        answer = self._compose_answer(ctx)
+        ctx.final_answer = answer
+        ctx.add_message("assistant", answer)
+
+        sources = ctx.shared_memory.get("rag_sources", [])
+        yield _event("answer", {"content": answer, "sources": sources})
+
+    def _compose_answer(self, ctx: AgentContext) -> str:
+        """
+        按优先级取各 Agent 的输出，拼成最终回答。
+        优先级：writing > translation > rag_answer
+        """
+        writing = ctx.shared_memory.get("writing_result", "")
+        translation = ctx.shared_memory.get("translation_result", "")
+        rag = ctx.shared_memory.get("rag_answer", "")
+
+        # CheckAgent 有改进建议时附在末尾
+        check = ctx.shared_memory.get("check_result", {})
+        suggestion = check.get("suggestion", "")
+
+        main = writing or translation or rag or "抱歉，未能生成有效回答。"
+
+        if suggestion and not check.get("passed", True):
+            main += f"\n\n> **注意**：{suggestion}"
+
+        return main
+
+
+# 全局单例（无状态，可共享）
+orchestrator = AgentOrchestrator()

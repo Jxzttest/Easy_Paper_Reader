@@ -1,9 +1,24 @@
-elasticsearch < 9.0.0
-redis
-SQLAlchemy
-asyncpg
-pyyaml
-fastapi
-starlette
-uvicorn
-pydantic
+# ── Web 框架 ─────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+starlette>=0.37.0
+pydantic>=2.0.0
+python-multipart          # 文件上传
+
+# ── 本地存储（零外部服务依赖）────────────────────────────────────────────
+aiosqlite>=0.20.0         # 异步 SQLite（元数据 + 对话 + 任务）
+chromadb>=0.5.0           # 本地向量数据库（向量检索）
+
+# ── PDF 解析 ──────────────────────────────────────────────────────────────
+PyMuPDF>=1.24.0           # 快速文字提取（默认解析器）
+# paddlepaddle            # 可选：PaddleOCR 依赖（按需安装）
+# paddleocr               # 可选：精准 OCR（图表/公式/扫描件）
+
+# ── AI 模型调用 ───────────────────────────────────────────────────────────
+openai>=1.30.0            # LLM + Embedding API（兼容 OpenAI 协议）
+
+# ── 工具库 ───────────────────────────────────────────────────────────────
+pyyaml>=6.0
+python-dotenv>=1.0.0      # 从 .env 加载环境变量
+httpx>=0.27.0             # 异步 HTTP（引用下载/外部 API）
+# croniter>=2.0.0         # 可选：精确 cron 解析（不装则用内置简单实现）

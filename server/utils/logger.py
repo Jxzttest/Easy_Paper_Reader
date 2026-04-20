@@ -88,6 +88,9 @@ def setup_elegant_logger(log_dir: str = "logs"):
 # 初始化全局 logger
 agent_logger = setup_elegant_logger()
 
+# 兼容简单调用：from server.utils.logger import logger
+logger = agent_logger
+
 
 class ComponentLoggerAdapter(logging.LoggerAdapter):
     """
