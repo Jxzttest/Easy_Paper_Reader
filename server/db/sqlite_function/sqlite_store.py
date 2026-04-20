@@ -233,11 +233,12 @@ class SQLiteStore:
 
     async def delete_session(self, user_uuid: str, session_id: str) -> None:
         await self._conn.execute(
-            "DELETE FROM conversations WHERE user_uuid = ? AND session_id = ?",
+            "DELETE FROM messages WHERE user_uuid = ? AND session_id = ?",
             (user_uuid, session_id)
         )
+
         await self._conn.execute(
-            "DELETE FROM messages WHERE user_uuid = ? AND session_id = ?",
+            "DELETE FROM conversations WHERE user_uuid = ? AND session_id = ?",
             (user_uuid, session_id)
         )
         await self._conn.commit()
