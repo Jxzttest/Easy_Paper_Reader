@@ -30,3 +30,8 @@ app.include_router(task_router)
 app.include_router(chat_router)
 app.include_router(citation_router)
 app.include_router(dialogue_manager_router)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="localhost", port=8800)
