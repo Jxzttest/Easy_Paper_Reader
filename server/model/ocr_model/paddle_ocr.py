@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import json
 from httpx import AsyncClient
-from typing import List, Dict, Any
+from typing import List, Dict, Any, AsyncGenerator
 from paddleocr import PPStructureV3
 from server.model.base_model import BaseAIModel
 
@@ -44,7 +44,7 @@ class PaddleOCRPipeline(BaseAIModel):
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=60)
         else:
-            self.use_gpu = self.kwargs.get('use_gpu')
+            self.use_gpu = self.kwargs.get('use_gpu', False)
             ocr_version = self.kwargs.get('ocr_version', "PP-OCRv5")
             lang = self.kwargs.get('lang', 'ch')
             # 初始化 PP-Structure

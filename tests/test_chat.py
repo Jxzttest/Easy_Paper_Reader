@@ -26,6 +26,7 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
+from server.config.config_loader import get_config
 load_dotenv()
 
 PASS = "✅ PASS"
@@ -38,8 +39,9 @@ def p(label: str, ok: bool):
 
 
 def _need_api():
-    if not os.environ.get("OPENAI_API_KEY"):
-        print(f"  {SKIP}  未设置 OPENAI_API_KEY，跳过此测试")
+    config = get_config()
+    if not config.get("llm", {}).get("api_key"):
+        print(f"  {SKIP}  配置文件中未设置 llm.api_key，跳过此测试")
         return False
     return True
 

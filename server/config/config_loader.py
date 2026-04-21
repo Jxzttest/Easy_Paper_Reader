@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / "config" / "model_config.yaml"
+_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / "server" / "config" / "model_config.yaml"
 
 
 def _load_config() -> dict:

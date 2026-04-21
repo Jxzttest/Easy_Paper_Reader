@@ -13,6 +13,7 @@ class BaseAIModel(ABC):
         
         self.api_key: Optional[str] = config.get("api_key")
         self.base_url: Optional[str] = config.get("base_url")
+        self.use_gpu: Optional[bool] = config.get("use_gpu", False)
         self.kwargs: Dict[str, Any] = config.get("kwargs", {})
 
         self.logger = ComponentLoggerAdapter(

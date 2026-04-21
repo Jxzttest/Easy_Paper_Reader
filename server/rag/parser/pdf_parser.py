@@ -130,13 +130,25 @@ class PDFParser:
         # PDF → 图片（在线程池中执行，避免阻塞）
         loop = asyncio.get_running_loop()
         image_paths = await loop.run_in_executor(None, self._convert_pdf_to_images)
+        config = {
+            "name": "paddle_ocr",
+            "type": "ocr",
+            "mode": "local",
+            "provider": "paddleocr",
+            "use_gpu": False,
+            "kwargs": {
+                "ocr_version": "PP-OCRv5",
+                "lang": "ch",
+                "use_gpu": False
+            }
+        }
 
-        ocr = PaddleOCRPipeline(use_gpu=False)
+        ocr = PaddleOCRPipeline(config)
         chunks = []
         for page_idx, img_path in enumerate(image_paths):
             page_num = page_idx + 1
             try:
-                page_structure = await ocr.invoke_single_img(img_path, str(self.assets_dir))
+                page_structure = await ocr.async_invoke(img_path, str(self.assets_dir), page_num)
                 for item in page_structure:
                     for res in item.get("parsing_res_list", []):
                         label = res.get("block_label", "")

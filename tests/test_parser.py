@@ -24,6 +24,7 @@ import glob
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
+from server.config.config_loader import get_config
 load_dotenv()
 
 PASS = "✅ PASS"
@@ -34,6 +35,13 @@ SKIP = "⏭  SKIP"
 def p(label: str, ok: bool):
     print(f"  {PASS if ok else FAIL}  {label}")
 
+
+def _need_api():
+    config = get_config()
+    if not config.get("llm", {}).get("api_key"):
+        print(f"  {SKIP}  配置文件中未设置 llm.api_key，跳过此测试")
+        return False
+    return True
 
 def _find_test_pdf() -> str:
     path = os.environ.get("PDF_PATH", "")
@@ -71,17 +79,24 @@ async def test_pymupdf_parse(pdf_path: str):
     if chunks:
         print(f"  示例 chunk (page {chunks[0]['page_num']}): {chunks[0]['content'][:80]}...")
 
+async def test_paddleocr_parse(pdf_path: str):
+    print("\n=== PaddleOCR 解析（不调用 API）===")
+    from server.rag.parser.pdf_parser import PDFParser
+    parser = PDFParser(pdf_path, uploader_uuid="test_user", parse_mode="paddleocr")
+    chunks = await parser._parse_with_paddleocr()
+    p("解析出 chunk > 0", len(chunks) > 0)
+    p("chunk 包含 content 字段", all("content" in c for c in chunks))
+    p("chunk 包含 page_num 字段", all("page_num" in c for c in chunks))
+    print(f"  共解析 {len(chunks)} 个文本块")
+    if chunks:
+        print(f"  示例 chunk (page {chunks[0]['page_num']}): {chunks[0]['content'][:80]}...")
+
 
 async def test_full_pipeline(pdf_path: str):
     """完整流程：需要 API Key + 已初始化 DBFactory。"""
     print("\n=== 完整解析流程（需要 API Key）===")
-    if not os.environ.get("OPENAI_API_KEY"):
-        print(f"  {SKIP}  未设置 OPENAI_API_KEY，跳过完整流程")
+    if not _need_api():
         return
-    if os.environ.get("SKIP_EMBED") == "1":
-        print(f"  {SKIP}  SKIP_EMBED=1，跳过 Embedding 调用")
-        return
-
     from server.db.db_factory import DBFactory
     from server.task.task_manager import task_manager
     await DBFactory.init_all()
@@ -123,6 +138,7 @@ async def main():
     print(f"测试 PDF: {pdf_path}")
     await test_metadata_extraction(pdf_path)
     await test_pymupdf_parse(pdf_path)
+    await test_paddleocr_parse(pdf_path)
     await test_full_pipeline(pdf_path)
     print("\n=== Parser tests done ===\n")
 

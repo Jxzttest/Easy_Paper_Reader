@@ -34,8 +34,11 @@ class DBFactory:
     async def close_all(cls):
         if cls._sqlite:
             await cls._sqlite.close()
+            cls._sqlite = None
         if cls._chroma:
             await cls._chroma.close()
+            cls._chroma = None
+        logger.info("[DBFactory] All storage closed.")
 
     @classmethod
     def get_sqlite(cls) -> SQLiteStore:
