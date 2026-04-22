@@ -41,6 +41,18 @@ export async function getTask(taskId) {
   return res.json();
 }
 
+export async function confirmTask(token) {
+  const res = await fetch(`${BASE}/tasks/confirm/${token}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Confirm task failed: ${res.status}`);
+  return res.json();
+}
+
+export async function rejectTask(token) {
+  const res = await fetch(`${BASE}/tasks/confirm/${token}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Reject task failed: ${res.status}`);
+  return res.json();
+}
+
 // ── Sessions ──────────────────────────────────────────────────────────────
 
 export async function newSession(paperUuid = '') {
@@ -132,6 +144,19 @@ export function chatSend({ sessionId, message, paperUuids = [], onEvent, onDone,
 
   run();
   return { close: () => { closed = true; } };
+}
+
+// ── Translate ─────────────────────────────────────────────────────────────
+
+export async function translateText(text, targetLang = 'auto') {
+  const res = await fetch(`${BASE}/translate/text`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, target_lang: targetLang }),
+  });
+  if (!res.ok) throw new Error(`Translate failed: ${res.status}`);
+  const data = await res.json();
+  return data.result || '';
 }
 
 // ── Citation Graph ─────────────────────────────────────────────────────────

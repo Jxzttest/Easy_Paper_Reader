@@ -6,10 +6,11 @@ SupervisorAgent —— 总 Agent
 
 职责：
   1. 分析用户意图，识别任务类型
-  2. 制定执行计划（plan），决定调用哪些子 Agent、以什么顺序
-  3. 在子 Agent 执行结束后，判断是否需要重规划
+  2. 区分「即时对话」和「后台任务」（即时任务/定时任务）
+  3. 制定执行计划（plan），决定调用哪些子 Agent、以什么顺序
+  4. 在子 Agent 执行结束后，判断是否需要重规划
 
-意图 → Agent 路由表：
+意图 → Agent 路由表（即时对话部分）：
   qa          → RAGAgent → CheckAgent
   innovation  → RAGAgent → WritingAgent(innovation) → CheckAgent
   writing     → RAGAgent → WritingAgent(draft) → CheckAgent
@@ -17,14 +18,24 @@ SupervisorAgent —— 总 Agent
   translation → TranslationAgent → CheckAgent
   citation    → CitationAgent
   general     → WritingAgent(general)
+
+后台任务（不进入 Agent 流，转交 TaskManager/Scheduler）：
+  task_once     → 即时后台任务（复杂、耗时，但不周期性）
+  task_periodic → 定时/周期后台任务
+
+判断为"任务"的核心标准（必须满足以下至少一条）：
+  - 需要跨论文、外部检索或网络获取数据
+  - 执行耗时较长，不适合在对话中同步等待
+  - 具有周期性或定时触发的需求
+  - 需要生成较大体量的内容（完整段落/章节）
 """
 
 import json
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from server.agent.base import AgentBase, AgentContext
 
-# 意图 → 执行计划（Agent 序列）
+# ── 即时对话意图路由 ──────────────────────────────────────────────────────────
 INTENT_PLAN: Dict[str, List[str]] = {
     "qa":          ["rag_agent", "check_agent"],
     "innovation":  ["rag_agent", "writing_agent", "check_agent"],
@@ -36,37 +47,67 @@ INTENT_PLAN: Dict[str, List[str]] = {
 }
 
 INTENT_DESCRIPTIONS = """
-- qa:          用户提问，需要检索论文内容来回答（含创新点梳理、论文解读等）
+即时对话意图（直接在对话中同步回答，不需要用户确认）：
+- qa:          用户提问，需要检索当前论文内容来回答（含创新点梳理、论文解读、数据解释等）
 - innovation:  梳理/分析论文创新点
-- writing:     撰写新的学术内容（段落、摘要、章节）
+- writing:     撰写短小的学术内容片段（一两句话、简短段落）
 - polish:      修改/润色已有文字
 - translation: 翻译（中英互译）
-- citation:    查找/下载引用文献
-- general:     其他通用请求
+- citation:    在当前数据库中查找/确认引用文献关系
+- general:     其他简单通用请求（不涉及复杂计算或长时间等待）
+
+后台任务意图（复杂、耗时或周期性，需要提示用户确认后再后台执行）：
+- task_once:     即时后台任务——用户要求做某件复杂的事，但可以异步执行，不需要等结果
+                 例：搜索同领域其他论文、根据某观点生成一个完整论文段落、分析多篇文献对比
+- task_periodic: 定时任务——用户希望周期性自动执行某操作
+                 例：每周收集最新相关论文、定期检查某作者的新论文
+
+判断为后台任务的关键标志：
+  ✓ 需要联网或跨越当前数据库的检索
+  ✓ 需要生成体量较大的内容（完整段落、完整章节）
+  ✓ 用到了"每天/每周/定期/自动/持续"等周期性关键词
+  ✓ 执行时间预计超过30秒，用户明显不需要立刻看到结果
+  ✗ 直接回答"这篇论文的..."、"数据库里哪篇..."等当前数据可回答的问题 → 不是任务
 """
 
 
 class SupervisorAgent(AgentBase):
     name = "supervisor_agent"
-    description = "分析用户意图，制定任务执行计划"
+    description = "分析用户意图，区分即时对话与后台任务，制定执行计划"
 
     async def run(self, ctx: AgentContext, **kwargs) -> Dict:
         user_input = kwargs.get("user_input", "")
-        intent, plan = await self._plan(ctx, user_input)
+        intent, plan, task_meta = await self._plan(ctx, user_input)
         ctx.shared_memory["intent"] = intent
         ctx.shared_memory["plan"] = plan
+        ctx.shared_memory["task_meta"] = task_meta
         return {
             "summary": f"intent={intent}, plan={plan}",
             "intent": intent,
             "plan": plan,
+            "task_meta": task_meta,
         }
 
-    async def _plan(self, ctx: AgentContext, user_input: str):
+    async def _plan(
+        self,
+        ctx: AgentContext,
+        user_input: str,
+    ) -> Tuple[str, List[str], Dict]:
+        """
+        返回 (intent, plan, task_meta)
+        task_meta 仅在 intent 为 task_once / task_periodic 时有内容：
+          {
+            "task_type": "once" | "periodic",
+            "task_desc": "...",       # 给用户看的任务描述
+            "cron_expr": "...",       # 仅 periodic，如 "0 9 * * 0" 每周日9点
+            "paper_uuids": [...],     # 关联的论文
+          }
+        """
         history = ctx.to_history_text(n=4)
         prompt = f"""你是一个学术论文助手的任务规划专家。
-根据用户的输入，从以下意图类型中选择最匹配的一个，并返回 JSON。
+根据用户输入，从以下意图类型中选择最匹配的一个，并返回 JSON。
 
-意图类型：
+意图类型及判断规则：
 {INTENT_DESCRIPTIONS}
 
 对话历史（最近4轮）：
@@ -79,7 +120,9 @@ class SupervisorAgent(AgentBase):
 {{
   "intent": "<意图类型>",
   "reason": "<简短说明为何选择此意图>",
-  "focus": "<用一句话概括用户最核心的需求>"
+  "focus": "<用一句话概括用户最核心的需求>",
+  "task_desc": "<仅当 intent 为 task_once 或 task_periodic 时填写：给用户展示的任务说明，如'搜索与本文同领域的最新5篇论文'。否则填空字符串>",
+  "cron_expr": "<仅当 intent 为 task_periodic 时填写 cron 表达式（5字段），否则填空字符串。例：'0 9 * * 0' 表示每周日9点>"
 }}"""
 
         resp = await self._invoke(
@@ -89,18 +132,28 @@ class SupervisorAgent(AgentBase):
         try:
             data = json.loads(resp.strip())
         except json.JSONDecodeError:
-            # 容错：从文本中提取 JSON
             import re
             m = re.search(r'\{.*\}', resp, re.DOTALL)
             data = json.loads(m.group()) if m else {}
 
         intent = data.get("intent", "general")
-        if intent not in INTENT_PLAN:
+        if intent not in {**INTENT_PLAN, "task_once": None, "task_periodic": None}:
             intent = "general"
 
         ctx.shared_memory["focus"] = data.get("focus", user_input)
-        plan = INTENT_PLAN[intent]
-        return intent, plan
+
+        # 后台任务：不走 Agent 链，由 Orchestrator 发出 confirm 事件
+        if intent in ("task_once", "task_periodic"):
+            task_meta = {
+                "task_type": "periodic" if intent == "task_periodic" else "once",
+                "task_desc": data.get("task_desc", user_input),
+                "cron_expr": data.get("cron_expr", ""),
+                "paper_uuids": ctx.paper_uuids,
+            }
+            return intent, [], task_meta
+
+        plan = INTENT_PLAN.get(intent, INTENT_PLAN["general"])
+        return intent, plan, {}
 
     async def replan(self, ctx: AgentContext, check_result: Dict) -> List[str]:
         """
@@ -131,4 +184,4 @@ CheckAgent 发现的问题：{issue}
                 return new_plan
         except Exception:
             pass
-        return ["check_agent"]  # 兜底：只做检查
+        return ["check_agent"]

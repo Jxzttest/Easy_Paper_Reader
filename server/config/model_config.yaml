@@ -20,3 +20,15 @@ storage:
   data_dir: "./data"                   # SQLite 和 ChromaDB 统一放这里
   papers_dir: "./data/papers"          # 上传的 PDF 原件
   assets_dir: "./data/assets"          # OCR 裁剪的图片
+
+# 翻译模型配置
+translation:
+  mode: api                            # api | local
+  # --- api 模式（默认，复用 llm 配置的 key/url）---
+  api_key: "sk-uyw7RoKzxFU4ugfOHzKLAJ9JkOUL9mKQUnrwIcR8jchDbKyC"
+  base_url: "https://api.aipaibox.com/v1"
+  model_name: "claude-opus-4-6"
+  # --- local 模式（本地小模型，取消注释并修改路径后切换 mode: local）---
+  # local_model_path: "./models/opus-mt-en-zh"   # Helsinki-NLP MarianMT 模型目录
+  # local_model_type: "marian"                    # marian | m2m100
+  # use_gpu: false                                # true 时使用 GPU 推理

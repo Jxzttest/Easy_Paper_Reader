@@ -11,6 +11,10 @@ import {
   Plus,
   Loader2,
   Trash2,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  CalendarClock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,7 +44,10 @@ import {
   deleteSession,
   chatSend,
   getPaperFileUrl,
+  confirmTask,
+  rejectTask,
 } from '@/api';
+import PdfViewer from '@/components/PdfViewer';
 
 const quickQuestions = [
   '总结这篇论文',
@@ -88,6 +95,35 @@ const Reader = () => {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const messagesEndRef = useRef(null);
   const streamRef = useRef(null);
+
+  // ── 任务确认 ─────────────────────────────────────────────────────────────
+  const handleConfirmTask = async (token) => {
+    try {
+      const result = await confirmTask(token);
+      const successMsg = result.job_id
+        ? `定时任务已设置 ✓（job: ${result.job_id}）`
+        : `后台任务已开始执行 ✓（task: ${result.task_id}）`;
+      toast.success(successMsg);
+      // 把确认结果追加到对话里让用户看到
+      setMessages(prev => prev.map(m =>
+        m.confirmToken === token ? { ...m, confirmed: true, confirmResult: successMsg } : m
+      ));
+    } catch {
+      toast.error('任务确认失败，请重试');
+    }
+  };
+
+  const handleRejectTask = async (token) => {
+    try {
+      await rejectTask(token);
+      toast.info('已取消该任务');
+      setMessages(prev => prev.map(m =>
+        m.confirmToken === token ? { ...m, confirmed: false, confirmResult: '您已取消该任务' } : m
+      ));
+    } catch {
+      toast.error('操作失败');
+    }
+  };
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
 
@@ -189,6 +225,22 @@ const Reader = () => {
           setMessages(prev => prev.map(m =>
             m.id === assistantId
               ? { ...m, content: `意图: ${ev.data.intent || ''}` }
+              : m
+          ));
+        } else if (ev.event === 'confirm') {
+          // 任务确认事件：在消息里插入确认卡片，不替换 content
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: ev.data.message || '',
+                  confirmToken: ev.data.token,
+                  confirmTaskType: ev.data.task_type,
+                  confirmTaskDesc: ev.data.task_desc,
+                  confirmCronExpr: ev.data.cron_expr,
+                  confirmed: null,  // null = 待确认
+                  agent: 'SupervisorAgent',
+                }
               : m
           ));
         }
@@ -366,10 +418,11 @@ const Reader = () => {
         {/* PDF Viewer */}
         <div className="flex-1 bg-gray-100 overflow-hidden">
           {paperId ? (
-            <iframe
-              src={getPaperFileUrl(paperId)}
-              className="w-full h-full border-0"
-              title="PDF Preview"
+            <PdfViewer
+              url={getPaperFileUrl(paperId)}
+              onAskAI={(selectedText) => {
+                setInputMessage(`请解释以下内容：\n"${selectedText}"`);
+              }}
             />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center">
@@ -409,6 +462,58 @@ const Reader = () => {
                     <div className={`text-sm whitespace-pre-wrap ${message.role === 'user' ? '' : 'text-gray-800'}`}>
                       {message.content || (message.role === 'assistant' && isStreaming ? '思考中...' : '')}
                     </div>
+
+                    {/* 任务确认卡片 */}
+                    {message.confirmToken && (
+                      <div className="mt-3 border border-blue-200 rounded-xl bg-blue-50 p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          {message.confirmTaskType === 'periodic'
+                            ? <CalendarClock className="w-4 h-4 text-blue-600" />
+                            : <Clock className="w-4 h-4 text-blue-600" />}
+                          <span className="text-xs font-semibold text-blue-700">
+                            {message.confirmTaskType === 'periodic' ? '定时任务' : '后台任务'}
+                          </span>
+                          {message.confirmCronExpr && (
+                            <span className="text-xs text-blue-500 font-mono">{message.confirmCronExpr}</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-700 mb-3 leading-relaxed">{message.confirmTaskDesc}</p>
+
+                        {message.confirmed === null && (
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs bg-blue-600 hover:bg-blue-700 flex items-center gap-1"
+                              onClick={() => handleConfirmTask(message.confirmToken)}
+                            >
+                              <CheckCircle2 className="w-3 h-3" /> 确认执行
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs flex items-center gap-1"
+                              onClick={() => handleRejectTask(message.confirmToken)}
+                            >
+                              <XCircle className="w-3 h-3" /> 取消
+                            </Button>
+                          </div>
+                        )}
+
+                        {message.confirmed === true && (
+                          <div className="flex items-center gap-1 text-xs text-green-600">
+                            <CheckCircle2 className="w-3 h-3" />
+                            {message.confirmResult}
+                          </div>
+                        )}
+                        {message.confirmed === false && (
+                          <div className="flex items-center gap-1 text-xs text-gray-400">
+                            <XCircle className="w-3 h-3" />
+                            {message.confirmResult}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <div className={`text-xs mt-2 ${message.role === 'user' ? 'text-blue-200' : 'text-gray-400'}`}>
                       {message.timestamp}
                     </div>

@@ -8,6 +8,7 @@ from server.rag.parser.parser_api import router as parser_router
 from server.task.task_api import router as task_router
 from server.chat.chat_api import router as chat_router
 from server.agent.citation_api import router as citation_router
+from server.translate.translate_api import router as translate_router
 
 
 @asynccontextmanager
@@ -41,6 +42,7 @@ app.include_router(parser_router)
 app.include_router(task_router)
 app.include_router(chat_router)
 app.include_router(citation_router)
+app.include_router(translate_router)
 
 
 if __name__ == "__main__":

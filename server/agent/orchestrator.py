@@ -6,8 +6,10 @@ AgentOrchestrator —— 多 Agent 协同编排引擎
 
 流程：
   1. SupervisorAgent 识别意图 → 生成执行计划（Agent 列表）
-  2. 按顺序执行各子 Agent，共享同一个 AgentContext
-  3. CheckAgent 评估结果：
+  2a. 即时对话意图 → 按顺序执行各子 Agent，共享同一个 AgentContext
+  2b. 后台任务意图 → 不执行 Agent，推送 confirm 事件，等待前端用户确认
+      用户确认后通过 POST /tasks/confirm/{token} 触发实际执行
+  3. CheckAgent 评估结果（仅即时对话）：
        - passed → 流程结束，汇总答案
        - failed + 重试次数未超限 → SupervisorAgent 重规划 → 继续执行
   4. 整个过程通过 AsyncGenerator 流式向外推送事件，
@@ -15,6 +17,8 @@ AgentOrchestrator —— 多 Agent 协同编排引擎
 
 事件格式（JSON Lines）：
   {"event": "plan",    "data": {"intent": "...", "plan": [...]}}
+  {"event": "confirm", "data": {"token": "...", "task_type": "once"|"periodic",
+                                 "task_desc": "...", "cron_expr": "..."}}
   {"event": "agent",   "data": {"name": "...", "status": "running"}}
   {"event": "result",  "data": {"name": "...", "summary": "..."}}
   {"event": "check",   "data": {"passed": true, "score": 0.9}}
@@ -25,7 +29,8 @@ AgentOrchestrator —— 多 Agent 协同编排引擎
 
 import asyncio
 import json
-from typing import AsyncGenerator, Dict, List, Optional
+import uuid
+from typing import AsyncGenerator, Dict, List
 
 from server.agent.base import AgentContext
 from server.agent.supervisor_agent import SupervisorAgent
@@ -79,9 +84,32 @@ class AgentOrchestrator:
 
         plan: List[str] = sup_result["plan"]
         intent: str = sup_result["intent"]
+        task_meta: Dict = sup_result.get("task_meta", {})
         yield _event("plan", {"intent": intent, "plan": plan})
 
-        # ── Step 2: 按计划执行子 Agent（支持重规划）───────────────────
+        # ── Step 2a: 后台任务 → 发出 confirm 事件，不立即执行 ─────────
+        if intent in ("task_once", "task_periodic"):
+            token = "confirm_" + uuid.uuid4().hex
+            # 将 task_meta 暂存在全局 pending store，等待确认
+            _pending_tasks[token] = {
+                **task_meta,
+                "session_id": ctx.session_id,
+                "paper_uuids": ctx.paper_uuids,
+            }
+            confirm_msg = _build_confirm_message(task_meta)
+            yield _event("confirm", {
+                "token": token,
+                "task_type": task_meta.get("task_type", "once"),
+                "task_desc": task_meta.get("task_desc", ""),
+                "cron_expr": task_meta.get("cron_expr", ""),
+                "message": confirm_msg,
+            })
+            # 将确认提示作为 assistant 消息保存到历史（让用户在对话界面看到）
+            ctx.add_message("assistant", confirm_msg)
+            yield _event("answer", {"content": confirm_msg, "sources": []})
+            return
+
+        # ── Step 2b: 即时对话 → 按计划执行子 Agent ────────────────────
         retry_count = 0
         remaining_plan = list(plan)
         ctx.shared_memory["completed_agents"] = []
@@ -89,7 +117,6 @@ class AgentOrchestrator:
         while remaining_plan:
             agent_name = remaining_plan.pop(0)
 
-            # 跳过不认识的 Agent 名（防御性处理）
             if agent_name not in _AGENT_REGISTRY and agent_name != "supervisor_agent":
                 logger.warning(f"[Orchestrator] unknown agent: {agent_name}, skip")
                 continue
@@ -101,7 +128,6 @@ class AgentOrchestrator:
                 result = await agent.execute(ctx)
             except Exception as e:
                 yield _event("error", {"message": f"{agent_name} 执行失败：{e}"})
-                # 非 CheckAgent 失败直接中止
                 if agent_name != "check_agent":
                     return
                 result = {"passed": False, "score": 0.0, "issue": str(e), "summary": ""}
@@ -121,7 +147,6 @@ class AgentOrchestrator:
                     new_plan = await self.supervisor.replan(ctx, result)
                     remaining_plan = new_plan
                     yield _event("replan", {"new_plan": new_plan, "retry": retry_count})
-                # passed 或超限：继续到流程结束
 
         # ── Step 3: 汇总最终答案 ──────────────────────────────────────
         answer = self._compose_answer(ctx)
@@ -132,15 +157,10 @@ class AgentOrchestrator:
         yield _event("answer", {"content": answer, "sources": sources})
 
     def _compose_answer(self, ctx: AgentContext) -> str:
-        """
-        按优先级取各 Agent 的输出，拼成最终回答。
-        优先级：writing > translation > rag_answer
-        """
         writing = ctx.shared_memory.get("writing_result", "")
         translation = ctx.shared_memory.get("translation_result", "")
         rag = ctx.shared_memory.get("rag_answer", "")
 
-        # CheckAgent 有改进建议时附在末尾
         check = ctx.shared_memory.get("check_result", {})
         suggestion = check.get("suggestion", "")
 
@@ -150,6 +170,42 @@ class AgentOrchestrator:
             main += f"\n\n> **注意**：{suggestion}"
 
         return main
+
+
+# ── 全局 pending task 暂存区 ──────────────────────────────────────────────────
+# token → task_meta dict，等待前端用户点击"确认"后执行
+_pending_tasks: Dict[str, Dict] = {}
+
+
+def get_pending_task(token: str) -> Dict | None:
+    return _pending_tasks.get(token)
+
+
+def consume_pending_task(token: str) -> Dict | None:
+    """取出并删除（一次性消费，防止重复触发）。"""
+    return _pending_tasks.pop(token, None)
+
+
+def _build_confirm_message(task_meta: Dict) -> str:
+    task_type = task_meta.get("task_type", "once")
+    task_desc = task_meta.get("task_desc", "执行后台任务")
+    cron_expr = task_meta.get("cron_expr", "")
+
+    if task_type == "periodic":
+        cron_hint = f"（执行周期：`{cron_expr}`）" if cron_expr else ""
+        return (
+            f"我将为您设置一个**定时任务**{cron_hint}：\n\n"
+            f"> {task_desc}\n\n"
+            f"任务将在后台定期自动执行，您可随时在任务面板中查看进度或取消。\n\n"
+            f"**请确认是否执行？**"
+        )
+    else:
+        return (
+            f"我将为您在后台执行以下任务：\n\n"
+            f"> {task_desc}\n\n"
+            f"任务执行完成后会通知您，期间您可以继续对话。\n\n"
+            f"**请确认是否执行？**"
+        )
 
 
 # 全局单例（无状态，可共享）
