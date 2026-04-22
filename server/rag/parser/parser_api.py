@@ -5,6 +5,7 @@ import uuid
 import pathlib
 
 from fastapi import APIRouter, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from starlette.responses import JSONResponse
 
 from server.config.config_loader import get_config
@@ -25,27 +26,19 @@ def _get_papers_dir() -> pathlib.Path:
 @router.post("/upload")
 async def upload_paper(
     pdf_file: UploadFile = File(...),
-    uploader_uuid: str = Form(...),
     parse_mode: str = Form("pymupdf"),  # pymupdf | paddleocr
 ):
     """
     上传 PDF 论文，构建多步 Task 并提交到 TaskManager。
     立即返回 task_id，前端通过 GET /tasks/{task_id} 轮询进度。
-
-    Steps:
-      1. save_file    — 保存 PDF 到本地
-      2. parse_pdf    — 解析文本块 + 写入向量库
     """
     logger.info(f"[parser_api] upload: {pdf_file.filename}, mode={parse_mode}")
 
-    # 先把文件内容读到内存（UploadFile 不能跨 async 边界）
     content = await pdf_file.read()
     original_name = pdf_file.filename
 
-    # ── 构建 Task ──────────────────────────────────────────────────────
-    task = Task("parse_pdf", user_uuid=uploader_uuid)
+    task = Task("parse_pdf")
 
-    # Step 1: 保存文件
     async def save_file():
         papers_dir = _get_papers_dir()
         safe_name = f"{uuid.uuid4().hex}_{original_name}"
@@ -53,12 +46,11 @@ async def upload_paper(
         with open(file_path, "wb") as f:
             f.write(content)
         logger.info(f"[parser_api] saved to {file_path}")
-        return file_path          # 返回值会传给下一步
+        return file_path
 
-    # Step 2: 解析 PDF（接收 Step 1 的 file_path）
     async def parse_pdf(file_path: str):
         from server.rag.parser.pdf_parser import PDFParser
-        parser = PDFParser(file_path, uploader_uuid, parse_mode=parse_mode)
+        parser = PDFParser(file_path, parse_mode=parse_mode)
         result = await parser.parse_and_save()
         return result
 
@@ -74,12 +66,48 @@ async def upload_paper(
     })
 
 
-@router.get("/list")
-async def list_papers(uploader_uuid: str = ""):
-    """列出论文（可按 uploader_uuid 过滤）。"""
+# /graph 必须在 /{paper_uuid} 之前注册，避免路由冲突
+@router.get("/graph")
+async def get_paper_graph():
+    """返回所有已处理论文构成的知识图谱节点。"""
     sqlite = DBFactory.get_sqlite()
-    papers = await sqlite.get_all_papers(uploader_uuid=uploader_uuid or None)
+    papers = await sqlite.get_all_papers()
+    nodes = [
+        {
+            "id": p["paper_uuid"],
+            "name": p["title"] or "Untitled",
+            "authors": p["authors"] or "",
+            "value": 50,
+            "category": 0,
+        }
+        for p in papers if p["is_processed"]
+    ]
+    return JSONResponse(content={"nodes": nodes, "links": []})
+
+
+@router.get("/list")
+async def list_papers():
+    """列出所有论文。"""
+    sqlite = DBFactory.get_sqlite()
+    papers = await sqlite.get_all_papers()
     return JSONResponse(content={"papers": papers})
+
+
+@router.get("/{paper_uuid}/file")
+async def get_paper_file(paper_uuid: str):
+    """直接返回论文 PDF 字节流，供前端 iframe 嵌入预览。"""
+    sqlite = DBFactory.get_sqlite()
+    paper = await sqlite.get_paper_metadata(paper_uuid)
+    if not paper or not paper.get("file_path"):
+        return JSONResponse(status_code=404, content={"detail": "file not found"})
+    file_path = pathlib.Path(paper["file_path"])
+    if not file_path.exists():
+        return JSONResponse(status_code=404, content={"detail": "file not on disk"})
+    return FileResponse(
+        str(file_path),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline"},
+    )
 
 
 @router.get("/{paper_uuid}")

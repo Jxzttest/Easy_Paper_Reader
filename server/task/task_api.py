@@ -19,10 +19,10 @@ async def get_task(task_id: str):
     return JSONResponse(content=task)
 
 
-@router.get("/user/{user_uuid}")
-async def get_user_tasks(user_uuid: str, limit: int = 20):
-    """获取用户的任务列表。"""
-    tasks = await task_manager.get_user_tasks(user_uuid, limit=limit)
+@router.get("/list")
+async def get_all_tasks(limit: int = 20):
+    """获取所有任务列表。"""
+    tasks = await task_manager.get_all_tasks(limit=limit)
     return JSONResponse(content={"tasks": tasks})
 
 

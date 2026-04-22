@@ -38,14 +38,12 @@ class ScheduledJob:
         self,
         job_id: str,
         paper_uuid: str,
-        user_uuid: str,
         cron_expr: str,
         job_type: str,
         fn: Callable[[], Coroutine],
     ):
         self.job_id = job_id
         self.paper_uuid = paper_uuid
-        self.user_uuid = user_uuid
         self.cron_expr = cron_expr
         self.job_type = job_type
         self.fn = fn
@@ -126,7 +124,6 @@ class SchedulerService:
             self._register_job(
                 job_id=row["job_id"],
                 paper_uuid=row["paper_uuid"],
-                user_uuid=row["user_uuid"],
                 cron_expr=row["cron_expr"],
                 job_type=row["job_type"],
             )
@@ -135,7 +132,6 @@ class SchedulerService:
     # ── 公开 API ─────────────────────────────────────────────────────────
     async def create_job(
         self,
-        user_uuid: str,
         paper_uuid: str,
         cron_expr: str,
         job_type: str = "citation_check",
@@ -151,14 +147,13 @@ class SchedulerService:
         sqlite = DBFactory.get_sqlite()
         await sqlite.create_scheduled_job(
             job_id=job_id,
-            user_uuid=user_uuid,
             paper_uuid=paper_uuid,
             cron_expr=cron_expr,
             job_type=job_type,
             next_run_at=next_run,
         )
 
-        self._register_job(job_id, paper_uuid, user_uuid, cron_expr, job_type)
+        self._register_job(job_id, paper_uuid, cron_expr, job_type)
         logger.info(f"[SchedulerService] created job {job_id} for paper {paper_uuid}")
         return job_id
 
@@ -196,12 +191,11 @@ class SchedulerService:
         self,
         job_id: str,
         paper_uuid: str,
-        user_uuid: str,
         cron_expr: str,
         job_type: str,
     ):
-        fn = _make_job_fn(paper_uuid, user_uuid, job_type)
-        job = ScheduledJob(job_id, paper_uuid, user_uuid, cron_expr, job_type, fn)
+        fn = _make_job_fn(paper_uuid, job_type)
+        job = ScheduledJob(job_id, paper_uuid, cron_expr, job_type, fn)
         self._jobs[job_id] = job
         job.start()
 
@@ -215,7 +209,7 @@ class SchedulerService:
 
 
 # ── 工厂函数：生成 Job 执行的协程 ─────────────────────────────────────────
-def _make_job_fn(paper_uuid: str, user_uuid: str, job_type: str) -> Callable:
+def _make_job_fn(paper_uuid: str, job_type: str) -> Callable:
     async def _fn():
         if job_type == "citation_check":
             from server.agent.citation_agent import CitationAgent

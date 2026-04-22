@@ -82,8 +82,6 @@ class CitationAgent(AgentBase):
 
         # 3. 逐条查询 Semantic Scholar
         found, downloaded, skipped, errors = [], 0, 0, []
-        paper_meta = await sqlite.get_paper_metadata(paper_uuid)
-        uploader_uuid = (paper_meta or {}).get("uploader_uuid", "system")
 
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             for cit in citations:
@@ -102,8 +100,7 @@ class CitationAgent(AgentBase):
                         if dl_path:
                             meta["local_path"] = dl_path
                             downloaded += 1
-                            # 5. 将下载的论文加入解析队列
-                            await self._enqueue_parse(dl_path, uploader_uuid, meta)
+                            await self._enqueue_parse(dl_path, meta)
                         else:
                             errors.append(f"下载失败: {meta['title'][:40]}")
                     else:
@@ -214,14 +211,13 @@ class CitationAgent(AgentBase):
             return None
 
     # ── 将下载的论文加入解析队列 ──────────────────────────────────────
-    async def _enqueue_parse(self, file_path: str, uploader_uuid: str, meta: Dict) -> None:
+    async def _enqueue_parse(self, file_path: str, meta: Dict) -> None:
         from server.task.task_manager import Task, task_manager
 
         async def parse_fn():
             from server.rag.parser.pdf_parser import PDFParser
-            parser = PDFParser(file_path, uploader_uuid)
+            parser = PDFParser(file_path)
             result = await parser.parse_and_save()
-            # 补充元数据（标题/DOI 等）
             sqlite = DBFactory.get_sqlite()
             await sqlite.update_paper_fields(
                 result["paper_uuid"],
@@ -233,7 +229,7 @@ class CitationAgent(AgentBase):
             )
             return result
 
-        task = Task("parse_citation_pdf", user_uuid=uploader_uuid)
+        task = Task("parse_citation_pdf")
         task.add_step("parse_pdf", parse_fn)
         await task_manager.submit(task)
 

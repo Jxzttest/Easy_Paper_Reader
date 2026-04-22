@@ -22,15 +22,10 @@ from server.utils.logger import logger
 class AgentContext:
     """
     一次对话/任务中所有 Agent 共享的上下文。
-
-    设计原则：
-      - 只读字段（session_id、user_uuid 等）在构造时确定。
-      - 可写字段（messages、memory、results）由各 Agent 追加，不覆盖。
-      - paper_uuids 是本次对话关联的论文列表，用于 RAG 检索时过滤。
+    单用户模式，无 user_uuid。
     """
     session_id: str
-    user_uuid: str
-    paper_uuids: List[str] = field(default_factory=list)   # 关联论文
+    paper_uuids: List[str] = field(default_factory=list)
 
     # 对话历史（OpenAI message 格式）
     messages: List[Dict] = field(default_factory=list)

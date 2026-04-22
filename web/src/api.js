@@ -1,13 +1,10 @@
-const BASE = 'http://localhost:8800';
-
-// 固定的演示用 user_uuid（真实项目应换成登录态）
-export const USER_UUID = 'demo-user-001';
+const BASE = '/api';
 
 // ── Papers ────────────────────────────────────────────────────────────────
+
 export async function uploadPaper(file, parseMode = 'pymupdf') {
   const form = new FormData();
   form.append('pdf_file', file);
-  form.append('uploader_uuid', USER_UUID);
   form.append('parse_mode', parseMode);
   const res = await fetch(`${BASE}/papers/upload`, { method: 'POST', body: form });
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
@@ -15,7 +12,7 @@ export async function uploadPaper(file, parseMode = 'pymupdf') {
 }
 
 export async function listPapers() {
-  const res = await fetch(`${BASE}/papers/list?uploader_uuid=${USER_UUID}`);
+  const res = await fetch(`${BASE}/papers/list`);
   if (!res.ok) throw new Error(`List papers failed: ${res.status}`);
   return res.json();
 }
@@ -32,7 +29,12 @@ export async function deletePaper(paperUuid) {
   return res.json();
 }
 
+export function getPaperFileUrl(paperUuid) {
+  return `${BASE}/papers/${paperUuid}/file`;
+}
+
 // ── Tasks ─────────────────────────────────────────────────────────────────
+
 export async function getTask(taskId) {
   const res = await fetch(`${BASE}/tasks/${taskId}`);
   if (!res.ok) throw new Error(`Get task failed: ${res.status}`);
@@ -40,41 +42,50 @@ export async function getTask(taskId) {
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────
+
 export async function newSession(paperUuid = '') {
   const res = await fetch(`${BASE}/chat/session/new`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_uuid: USER_UUID, paper_uuid: paperUuid }),
+    body: JSON.stringify({ paper_uuid: paperUuid }),
   });
   if (!res.ok) throw new Error(`New session failed: ${res.status}`);
   return res.json();
 }
 
-export async function listSessions() {
-  const res = await fetch(`${BASE}/chat/session/list?user_uuid=${USER_UUID}`);
+export async function listSessions(paperUuid = '') {
+  const params = paperUuid ? `?paper_uuid=${encodeURIComponent(paperUuid)}` : '';
+  const res = await fetch(`${BASE}/chat/session/list${params}`);
   if (!res.ok) throw new Error(`List sessions failed: ${res.status}`);
   return res.json();
 }
 
-export async function getSessionMessages(sessionId) {
-  const res = await fetch(`${BASE}/chat/session/${sessionId}`);
+export async function getSessionMessages(sessionId, limit = 50) {
+  const res = await fetch(`${BASE}/chat/session/${sessionId}?limit=${limit}`);
   if (!res.ok) throw new Error(`Get session failed: ${res.status}`);
   return res.json();
 }
 
 export async function deleteSession(sessionId) {
-  const res = await fetch(`${BASE}/chat/session/${sessionId}?user_uuid=${USER_UUID}`, {
+  const res = await fetch(`${BASE}/chat/session/${sessionId}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`Delete session failed: ${res.status}`);
   return res.json();
 }
 
+export async function renameSession(sessionId, title) {
+  const res = await fetch(`${BASE}/chat/session/${sessionId}/title?title=${encodeURIComponent(title)}`, {
+    method: 'PATCH',
+  });
+  if (!res.ok) throw new Error(`Rename session failed: ${res.status}`);
+  return res.json();
+}
+
 // ── Chat SSE ──────────────────────────────────────────────────────────────
-// 返回 EventSource，调用方负责关闭
+
 export function chatSend({ sessionId, message, paperUuids = [], onEvent, onDone, onError }) {
   const body = JSON.stringify({
-    user_uuid: USER_UUID,
     session_id: sessionId,
     message,
     paper_uuids: paperUuids,
@@ -100,7 +111,7 @@ export function chatSend({ sessionId, message, paperUuids = [], onEvent, onDone,
         if (done || closed) break;
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split('\n');
-        buf = lines.pop(); // last may be incomplete
+        buf = lines.pop();
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const raw = line.slice(6).trim();
@@ -121,4 +132,35 @@ export function chatSend({ sessionId, message, paperUuids = [], onEvent, onDone,
 
   run();
   return { close: () => { closed = true; } };
+}
+
+// ── Citation Graph ─────────────────────────────────────────────────────────
+
+const CATEGORY_COLORS = [
+  '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
+  '#fc8452', '#9a60b4', '#ea7ccc',
+];
+
+export async function getCitationGraph() {
+  const res = await fetch(`${BASE}/papers/graph`);
+  if (!res.ok) throw new Error(`Get graph failed: ${res.status}`);
+  const data = await res.json();
+
+  // 后端返回的节点无分类，这里按字母顺序简单分组（0 类）
+  // 真实分类需要后端提供
+  const categories = [{ name: '已解析论文', itemStyle: { color: CATEGORY_COLORS[0] } }];
+
+  const papers = (data.nodes || []).map((n) => ({
+    id: n.id,
+    name: n.name,
+    authors: n.authors || '',
+    value: n.value || 50,
+    category: 0,
+  }));
+
+  return {
+    papers,
+    categories,
+    links: data.links || [],
+  };
 }

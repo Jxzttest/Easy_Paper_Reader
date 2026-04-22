@@ -1,21 +1,24 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { ToastProvider } from './components/Toast';
-import Dashboard from './pages/Dashboard';
-import Reader from './pages/Reader';
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { HashRouter, Routes, Route } from "react-router-dom";
+import { navItems } from "./nav-items";
 
-function App() {
-  return (
-    <ToastProvider>
-      <Router>
+const queryClient = new QueryClient();
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Toaster />
+      <HashRouter>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/read/:id" element={<Reader />} />
+          {navItems.map(({ to, page }) => (
+            <Route key={to} path={to} element={page} />
+          ))}
         </Routes>
-      </Router>
-    </ToastProvider>
-  );
-}
+      </HashRouter>
+    </TooltipProvider>
+  </QueryClientProvider>
+);
 
 export default App;

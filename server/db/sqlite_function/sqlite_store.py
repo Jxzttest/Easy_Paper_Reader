@@ -17,6 +17,7 @@ class SQLiteStore:
     """
     轻量化本地存储，替代 PostgreSQL + ES chat 索引。
     负责：论文元数据、对话 session、对话消息、任务状态。
+    单用户模式，无 user_uuid 区分。
     """
 
     def __init__(self, db_path: Optional[str] = None):
@@ -43,12 +44,6 @@ class SQLiteStore:
     # ------------------------------------------------------------------ #
     async def _create_tables(self):
         await self._conn.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_uuid   TEXT PRIMARY KEY,
-                username    TEXT NOT NULL,
-                created_at  TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS paper_metadata (
                 paper_uuid      TEXT PRIMARY KEY,
                 title           TEXT NOT NULL,
@@ -60,13 +55,11 @@ class SQLiteStore:
                 file_path       TEXT,
                 is_processed    INTEGER NOT NULL DEFAULT 0,
                 parse_mode      TEXT DEFAULT 'pymupdf',
-                uploader_uuid   TEXT,
                 created_at      TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS conversations (
                 session_id  TEXT PRIMARY KEY,
-                user_uuid   TEXT NOT NULL,
                 title       TEXT DEFAULT '',
                 paper_uuid  TEXT,
                 created_at  TEXT NOT NULL
@@ -75,7 +68,6 @@ class SQLiteStore:
             CREATE TABLE IF NOT EXISTS messages (
                 message_id          TEXT PRIMARY KEY,
                 session_id          TEXT NOT NULL,
-                user_uuid           TEXT NOT NULL,
                 parent_message_id   TEXT,
                 role                TEXT NOT NULL,
                 content             TEXT NOT NULL,
@@ -86,7 +78,6 @@ class SQLiteStore:
 
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id         TEXT PRIMARY KEY,
-                user_uuid       TEXT NOT NULL,
                 session_id      TEXT,
                 task_type       TEXT NOT NULL,
                 status          TEXT NOT NULL DEFAULT 'pending',
@@ -99,10 +90,9 @@ class SQLiteStore:
 
             CREATE TABLE IF NOT EXISTS scheduled_jobs (
                 job_id          TEXT PRIMARY KEY,
-                user_uuid       TEXT NOT NULL,
                 paper_uuid      TEXT NOT NULL,
                 job_type        TEXT NOT NULL DEFAULT 'citation_check',
-                cron_expr       TEXT NOT NULL,          -- cron 表达式，如 '0 9 * * *'
+                cron_expr       TEXT NOT NULL,
                 is_active       INTEGER NOT NULL DEFAULT 1,
                 last_run_at     TEXT,
                 next_run_at     TEXT,
@@ -111,30 +101,8 @@ class SQLiteStore:
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-            CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_uuid);
-            CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_uuid);
-            CREATE INDEX IF NOT EXISTS idx_paper_uploader ON paper_metadata(uploader_uuid);
-            CREATE INDEX IF NOT EXISTS idx_jobs_user ON scheduled_jobs(user_uuid);
             CREATE INDEX IF NOT EXISTS idx_jobs_active ON scheduled_jobs(is_active);
         """)
-
-    # ------------------------------------------------------------------ #
-    # Users
-    # ------------------------------------------------------------------ #
-    async def create_user(self, user_uuid: str, username: str) -> None:
-        now = datetime.datetime.utcnow().isoformat()
-        await self._conn.execute(
-            "INSERT OR IGNORE INTO users (user_uuid, username, created_at) VALUES (?, ?, ?)",
-            (user_uuid, username, now)
-        )
-        await self._conn.commit()
-
-    async def get_user(self, user_uuid: str) -> Optional[Dict]:
-        async with self._conn.execute(
-            "SELECT * FROM users WHERE user_uuid = ?", (user_uuid,)
-        ) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
 
     # ------------------------------------------------------------------ #
     # Papers
@@ -143,7 +111,6 @@ class SQLiteStore:
         self,
         paper_uuid: str,
         title: str,
-        uploader_uuid: str,
         file_path: str,
         authors: str = "",
         abstract: str = "",
@@ -156,10 +123,10 @@ class SQLiteStore:
         await self._conn.execute(
             """INSERT OR IGNORE INTO paper_metadata
                (paper_uuid, title, authors, publish_year, abstract, doi, arxiv_id,
-                file_path, is_processed, parse_mode, uploader_uuid, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+                file_path, is_processed, parse_mode, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
             (paper_uuid, title, authors, publish_year, abstract, doi, arxiv_id,
-             file_path, parse_mode, uploader_uuid, now)
+             file_path, parse_mode, now)
         )
         await self._conn.commit()
 
@@ -177,14 +144,10 @@ class SQLiteStore:
             row = await cur.fetchone()
             return dict(row) if row else None
 
-    async def get_all_papers(self, uploader_uuid: Optional[str] = None) -> List[Dict]:
-        if uploader_uuid:
-            sql = "SELECT * FROM paper_metadata WHERE uploader_uuid = ? ORDER BY created_at DESC"
-            args = (uploader_uuid,)
-        else:
-            sql = "SELECT * FROM paper_metadata ORDER BY created_at DESC"
-            args = ()
-        async with self._conn.execute(sql, args) as cur:
+    async def get_all_papers(self) -> List[Dict]:
+        async with self._conn.execute(
+            "SELECT * FROM paper_metadata ORDER BY created_at DESC"
+        ) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
@@ -209,19 +172,22 @@ class SQLiteStore:
     # ------------------------------------------------------------------ #
     # Conversations
     # ------------------------------------------------------------------ #
-    async def add_session(self, user_uuid: str, session_id: str, paper_uuid: str = "") -> None:
+    async def add_session(self, session_id: str, paper_uuid: str = "") -> None:
         now = datetime.datetime.utcnow().isoformat()
         await self._conn.execute(
-            "INSERT OR IGNORE INTO conversations (session_id, user_uuid, paper_uuid, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, user_uuid, paper_uuid, now)
+            "INSERT OR IGNORE INTO conversations (session_id, paper_uuid, created_at) VALUES (?, ?, ?)",
+            (session_id, paper_uuid, now)
         )
         await self._conn.commit()
 
-    async def get_user_sessions(self, user_uuid: str) -> List[Dict]:
-        async with self._conn.execute(
-            "SELECT * FROM conversations WHERE user_uuid = ? ORDER BY created_at DESC",
-            (user_uuid,)
-        ) as cur:
+    async def get_all_sessions(self, paper_uuid: str = "") -> List[Dict]:
+        if paper_uuid:
+            sql = "SELECT * FROM conversations WHERE paper_uuid = ? ORDER BY created_at DESC"
+            args = (paper_uuid,)
+        else:
+            sql = "SELECT * FROM conversations ORDER BY created_at DESC"
+            args = ()
+        async with self._conn.execute(sql, args) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
@@ -231,15 +197,12 @@ class SQLiteStore:
         )
         await self._conn.commit()
 
-    async def delete_session(self, user_uuid: str, session_id: str) -> None:
+    async def delete_session(self, session_id: str) -> None:
         await self._conn.execute(
-            "DELETE FROM messages WHERE user_uuid = ? AND session_id = ?",
-            (user_uuid, session_id)
+            "DELETE FROM messages WHERE session_id = ?", (session_id,)
         )
-
         await self._conn.execute(
-            "DELETE FROM conversations WHERE user_uuid = ? AND session_id = ?",
-            (user_uuid, session_id)
+            "DELETE FROM conversations WHERE session_id = ?", (session_id,)
         )
         await self._conn.commit()
 
@@ -254,7 +217,6 @@ class SQLiteStore:
     # ------------------------------------------------------------------ #
     async def add_message(
         self,
-        user_uuid: str,
         session_id: str,
         role: str,
         content: str,
@@ -266,9 +228,9 @@ class SQLiteStore:
         files_json = json.dumps(files_info or [], ensure_ascii=False)
         await self._conn.execute(
             """INSERT INTO messages
-               (message_id, session_id, user_uuid, parent_message_id, role, content, files_info, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (message_id, session_id, user_uuid, parent_message_id, role, content, files_json, timestamp)
+               (message_id, session_id, parent_message_id, role, content, files_info, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (message_id, session_id, parent_message_id, role, content, files_json, timestamp)
         )
         await self._conn.commit()
         return message_id
@@ -286,29 +248,21 @@ class SQLiteStore:
                 result.append(d)
             return result
 
-    async def delete_message(self, user_uuid: str, session_id: str) -> None:
-        await self._conn.execute(
-            "DELETE FROM messages WHERE user_uuid = ? AND session_id = ?",
-            (user_uuid, session_id)
-        )
-        await self._conn.commit()
-
     # ------------------------------------------------------------------ #
-    # Tasks  （并发任务状态追踪）
+    # Tasks
     # ------------------------------------------------------------------ #
     async def create_task(
         self,
         task_id: str,
-        user_uuid: str,
         task_type: str,
         session_id: str = "",
     ) -> None:
         now = datetime.datetime.utcnow().isoformat()
         await self._conn.execute(
             """INSERT INTO tasks
-               (task_id, user_uuid, session_id, task_type, status, steps, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'pending', '[]', ?, ?)""",
-            (task_id, user_uuid, session_id, task_type, now, now)
+               (task_id, session_id, task_type, status, steps, created_at, updated_at)
+               VALUES (?, ?, ?, 'pending', '[]', ?, ?)""",
+            (task_id, session_id, task_type, now, now)
         )
         await self._conn.commit()
 
@@ -346,10 +300,9 @@ class SQLiteStore:
             d["steps"] = json.loads(d.get("steps") or "[]")
             return d
 
-    async def get_user_tasks(self, user_uuid: str, limit: int = 20) -> List[Dict]:
+    async def get_all_tasks(self, limit: int = 20) -> List[Dict]:
         async with self._conn.execute(
-            "SELECT * FROM tasks WHERE user_uuid = ? ORDER BY created_at DESC LIMIT ?",
-            (user_uuid, limit)
+            "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
         ) as cur:
             rows = await cur.fetchall()
             result = []
@@ -365,7 +318,6 @@ class SQLiteStore:
     async def create_scheduled_job(
         self,
         job_id: str,
-        user_uuid: str,
         paper_uuid: str,
         cron_expr: str,
         job_type: str = "citation_check",
@@ -374,10 +326,10 @@ class SQLiteStore:
         now = datetime.datetime.utcnow().isoformat()
         await self._conn.execute(
             """INSERT OR REPLACE INTO scheduled_jobs
-               (job_id, user_uuid, paper_uuid, job_type, cron_expr, is_active,
+               (job_id, paper_uuid, job_type, cron_expr, is_active,
                 next_run_at, run_count, created_at)
-               VALUES (?, ?, ?, ?, ?, 1, ?, 0, ?)""",
-            (job_id, user_uuid, paper_uuid, job_type, cron_expr, next_run_at, now)
+               VALUES (?, ?, ?, ?, 1, ?, 0, ?)""",
+            (job_id, paper_uuid, job_type, cron_expr, next_run_at, now)
         )
         await self._conn.commit()
 
@@ -389,10 +341,9 @@ class SQLiteStore:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
-    async def get_user_jobs(self, user_uuid: str) -> List[Dict]:
+    async def get_all_jobs(self) -> List[Dict]:
         async with self._conn.execute(
-            "SELECT * FROM scheduled_jobs WHERE user_uuid = ? ORDER BY created_at DESC",
-            (user_uuid,)
+            "SELECT * FROM scheduled_jobs ORDER BY created_at DESC"
         ) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]

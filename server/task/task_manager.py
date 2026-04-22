@@ -84,10 +84,9 @@ class Task:
         await task_manager.submit(task)
     """
 
-    def __init__(self, task_type: str, user_uuid: str, session_id: str = ""):
+    def __init__(self, task_type: str, session_id: str = ""):
         self.task_id = "task_" + uuid.uuid4().hex
         self.task_type = task_type
-        self.user_uuid = user_uuid
         self.session_id = session_id
         self.status: str = TaskStatus.PENDING
         self.steps: List[Step] = []
@@ -111,7 +110,6 @@ class Task:
         return {
             "task_id": self.task_id,
             "task_type": self.task_type,
-            "user_uuid": self.user_uuid,
             "session_id": self.session_id,
             "status": self.status,
             "steps": [s.to_dict() for s in self.steps],
@@ -152,7 +150,6 @@ class TaskManager:
         sqlite = DBFactory.get_sqlite()
         await sqlite.create_task(
             task_id=task.task_id,
-            user_uuid=task.user_uuid,
             task_type=task.task_type,
             session_id=task.session_id,
         )
@@ -168,14 +165,10 @@ class TaskManager:
         sqlite = DBFactory.get_sqlite()
         return await sqlite.get_task(task_id)
 
-    async def get_user_tasks(self, user_uuid: str, limit: int = 20) -> List[Dict]:
+    async def get_all_tasks(self, limit: int = 20) -> List[Dict]:
         sqlite = DBFactory.get_sqlite()
-        db_tasks = await sqlite.get_user_tasks(user_uuid, limit)
-        # 合并内存中正在运行的任务（可能 SQLite 尚未同步最新状态）
-        running = [
-            t.to_dict() for t in self._running.values()
-            if t.user_uuid == user_uuid
-        ]
+        db_tasks = await sqlite.get_all_tasks(limit)
+        running = [t.to_dict() for t in self._running.values()]
         running_ids = {t["task_id"] for t in running}
         merged = running + [t for t in db_tasks if t["task_id"] not in running_ids]
         return merged[:limit]

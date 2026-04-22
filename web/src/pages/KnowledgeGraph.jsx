@@ -1,16 +1,16 @@
-import { useState, useEffect, useRef } from 'react'; // useEffect used in data fetch
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactECharts from 'echarts-for-react';
-import {
-  ArrowLeft,
-  Search,
-  Filter,
+import { 
+  ArrowLeft, 
+  Search, 
+  Filter, 
+  Info,
   BookOpen,
   Share2,
   Maximize2,
   Minimize2,
-  RotateCcw,
-  Loader2,
+  RotateCcw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,6 +23,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetTrigger,
 } from '@/components/ui/sheet';
 import { getCitationGraph } from '@/api';
 
@@ -128,11 +129,17 @@ const KnowledgeGraph = () => {
   });
 
   const handleChartClick = (params) => {
-    if (params.dataType === 'node') setSelectedNode(params.data);
+    if (params.dataType === 'node') {
+      setSelectedNode(params.data);
+    }
   };
 
   const handleReset = () => {
-    chartRef.current?.getEchartsInstance().dispatchAction({ type: 'restore' });
+    if (chartRef.current) {
+      chartRef.current.getEchartsInstance().dispatchAction({
+        type: 'restore'
+      });
+    }
   };
 
   const getRelatedPapers = (nodeId) => {
@@ -149,14 +156,6 @@ const KnowledgeGraph = () => {
     });
     return related;
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-      </div>
-    );
-  }
 
   return (
     <div className={`flex flex-col bg-gray-50 ${isFullscreen ? 'fixed inset-0 z-50' : 'min-h-screen'}`}>
@@ -178,7 +177,7 @@ const KnowledgeGraph = () => {
             </div>
           </div>
         </div>
-
+        
         <div className="flex items-center gap-3">
           <div className="relative hidden md:block">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -189,14 +188,14 @@ const KnowledgeGraph = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
-
+          
           <Button variant="outline" size="icon" onClick={handleReset} title="重置视图">
             <RotateCcw className="w-4 h-4" />
           </Button>
-
-          <Button
-            variant="outline"
-            size="icon"
+          
+          <Button 
+            variant="outline" 
+            size="icon" 
             onClick={() => setIsFullscreen(!isFullscreen)}
             title={isFullscreen ? '退出全屏' : '全屏'}
           >
@@ -212,10 +211,12 @@ const KnowledgeGraph = () => {
             ref={chartRef}
             option={getOption()}
             style={{ width: '100%', height: '100%' }}
-            onEvents={{ click: handleChartClick }}
+            onEvents={{
+              click: handleChartClick
+            }}
           />
-
-          {/* Category Legend */}
+          
+          {/* Legend/Filter Overlay */}
           <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-4 max-w-xs">
             <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
               <Filter className="w-4 h-4" />
@@ -224,15 +225,19 @@ const KnowledgeGraph = () => {
             <div className="space-y-2">
               {graphData.categories.map((cat, idx) => (
                 <div key={idx} className="flex items-center gap-2 text-xs">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.itemStyle.color }} />
+                  <div 
+                    className="w-3 h-3 rounded-full" 
+                    style={{ backgroundColor: cat.itemStyle.color }}
+                  />
                   <span className="text-gray-600">{cat.name}</span>
                 </div>
               ))}
             </div>
           </div>
-
+          
+          {/* Instructions */}
           <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-3 text-xs text-gray-500">
-            <p>滚轮缩放 · 拖拽移动 · 点击节点查看详情</p>
+            <p>🖱️ 滚轮缩放 · 拖拽移动 · 点击节点查看详情</p>
           </div>
         </div>
 
@@ -241,18 +246,18 @@ const KnowledgeGraph = () => {
           <SheetContent className="w-96">
             <SheetHeader>
               <SheetTitle className="flex items-start gap-3">
-                <div
+                <div 
                   className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                  style={{
-                    backgroundColor: selectedNode
-                      ? graphData.categories[selectedNode.category]?.itemStyle.color + '20'
-                      : 'transparent'
+                  style={{ 
+                    backgroundColor: selectedNode ? 
+                      graphData.categories[selectedNode.category]?.itemStyle.color + '20' : 
+                      'transparent' 
                   }}
                 >
-                  <BookOpen className="w-5 h-5" style={{
-                    color: selectedNode
-                      ? graphData.categories[selectedNode.category]?.itemStyle.color
-                      : '#6b7280'
+                  <BookOpen className="w-5 h-5" style={{ 
+                    color: selectedNode ? 
+                      graphData.categories[selectedNode.category]?.itemStyle.color : 
+                      '#6b7280' 
                   }} />
                 </div>
                 <div className="flex-1">
@@ -261,7 +266,7 @@ const KnowledgeGraph = () => {
                 </div>
               </SheetTitle>
             </SheetHeader>
-
+            
             {selectedNode && (
               <div className="mt-6 space-y-6">
                 <div className="grid grid-cols-2 gap-3">
@@ -283,12 +288,12 @@ const KnowledgeGraph = () => {
 
                 <div>
                   <h4 className="text-sm font-semibold mb-2">所属类别</h4>
-                  <Badge
+                  <Badge 
                     variant="outline"
-                    style={{
+                    style={{ 
                       borderColor: graphData.categories[selectedNode.category]?.itemStyle.color,
                       color: graphData.categories[selectedNode.category]?.itemStyle.color,
-                      backgroundColor: graphData.categories[selectedNode.category]?.itemStyle.color + '10',
+                      backgroundColor: graphData.categories[selectedNode.category]?.itemStyle.color + '10'
                     }}
                   >
                     {graphData.categories[selectedNode.category]?.name}
@@ -300,21 +305,23 @@ const KnowledgeGraph = () => {
                   <ScrollArea className="h-64">
                     <div className="space-y-2">
                       {getRelatedPapers(selectedNode.id).map((paper) => (
-                        <Card
-                          key={paper.id}
+                        <Card 
+                          key={paper.id} 
                           className="cursor-pointer hover:bg-gray-50 transition-colors"
                           onClick={() => setSelectedNode(paper)}
                         >
                           <CardContent className="p-3">
                             <div className="flex items-start gap-3">
-                              <div
+                              <div 
                                 className="w-2 h-2 rounded-full mt-2 shrink-0"
                                 style={{ backgroundColor: graphData.categories[paper.category]?.itemStyle.color }}
                               />
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium truncate">{paper.name}</p>
                                 <div className="flex items-center gap-2 mt-1">
-                                  <Badge variant="secondary" className="text-xs">{paper.relation}</Badge>
+                                  <Badge variant="secondary" className="text-xs">
+                                    {paper.relation}
+                                  </Badge>
                                   <span className="text-xs text-gray-400">{paper.authors}</span>
                                 </div>
                               </div>
@@ -331,7 +338,9 @@ const KnowledgeGraph = () => {
                     <BookOpen className="w-4 h-4 mr-2" />
                     阅读论文
                   </Button>
-                  <Button variant="outline" onClick={() => setSelectedNode(null)}>关闭</Button>
+                  <Button variant="outline" onClick={() => setSelectedNode(null)}>
+                    关闭
+                  </Button>
                 </div>
               </div>
             )}

@@ -32,9 +32,8 @@ class PDFParser:
       4. 标记论文处理完成
     """
 
-    def __init__(self, file_path: str, uploader_uuid: str, parse_mode: Optional[str] = None):
+    def __init__(self, file_path: str, parse_mode: Optional[str] = None):
         self.file_path = file_path
-        self.uploader_uuid = uploader_uuid
         self.paper_uuid = uuid.uuid4().hex
 
         cfg = get_config()
@@ -63,7 +62,6 @@ class PDFParser:
         await sqlite.add_paper_metadata(
             paper_uuid=self.paper_uuid,
             title=metadata.get("title", "Untitled"),
-            uploader_uuid=self.uploader_uuid,
             file_path=self.file_path,
             authors=metadata.get("author", ""),
             parse_mode=self.parse_mode,

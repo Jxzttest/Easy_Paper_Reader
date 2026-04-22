@@ -8,7 +8,6 @@ from server.rag.parser.parser_api import router as parser_router
 from server.task.task_api import router as task_router
 from server.chat.chat_api import router as chat_router
 from server.agent.citation_api import router as citation_router
-from server.chat_manager.dialogue_manager_api import router as dialogue_manager_router
 
 
 @asynccontextmanager
@@ -29,7 +28,10 @@ app = FastAPI(title="Easy Paper Reader", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:8080", "http://127.0.0.1:8080",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,7 +41,6 @@ app.include_router(parser_router)
 app.include_router(task_router)
 app.include_router(chat_router)
 app.include_router(citation_router)
-app.include_router(dialogue_manager_router)
 
 
 if __name__ == "__main__":
