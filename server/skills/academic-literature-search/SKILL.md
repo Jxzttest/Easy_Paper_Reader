@@ -1,6 +1,21 @@
 ---
 name: academic-literature-search
-description: # Academic Literature Search — 学术文献检索与引用管理
+description: Academic Literature Search — 学术文献检索与引用管理
+triggers:
+  - 搜文献
+  - 检索论文
+  - 找论文
+  - 相关论文
+  - 同领域论文
+  - 最新论文
+  - arXiv
+  - PubMed
+  - bioRxiv
+  - search papers
+  - literature search
+  - citation
+  - 引用文献
+executor: python
 ---
 
 # Academic Literature Search — 学术文献检索与引用管理

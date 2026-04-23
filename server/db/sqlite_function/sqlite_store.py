@@ -102,6 +102,26 @@ class SQLiteStore:
 
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
             CREATE INDEX IF NOT EXISTS idx_jobs_active ON scheduled_jobs(is_active);
+
+            -- ── 智能分块记忆表 ──────────────────────────────────────────────
+            -- layer: system | user_intent | working | history_summary
+            -- priority: 0(最高) ~ 3
+            -- token_estimate: 粗略字符数/2 估算 token 数
+            CREATE TABLE IF NOT EXISTS memory_blocks (
+                block_id        TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL,
+                layer           TEXT NOT NULL,
+                priority        INTEGER NOT NULL DEFAULT 2,
+                content         TEXT NOT NULL,
+                metadata        TEXT DEFAULT '{}',
+                token_estimate  INTEGER NOT NULL DEFAULT 0,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES conversations(session_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_memory_session_layer
+                ON memory_blocks(session_id, layer);
         """)
 
     # ------------------------------------------------------------------ #
@@ -377,3 +397,101 @@ class SQLiteStore:
             "DELETE FROM scheduled_jobs WHERE job_id = ?", (job_id,)
         )
         await self._conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Memory Blocks（四层智能记忆）
+    # ------------------------------------------------------------------ #
+
+    async def upsert_memory_block(
+        self,
+        block_id: str,
+        session_id: str,
+        layer: str,
+        content: str,
+        priority: int = 2,
+        metadata: Optional[Dict] = None,
+    ) -> None:
+        """写入或更新一个记忆块。token_estimate = len(content) // 2（粗估）。"""
+        now = datetime.datetime.utcnow().isoformat()
+        token_estimate = len(content) // 2
+        meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+        await self._conn.execute(
+            """INSERT INTO memory_blocks
+               (block_id, session_id, layer, priority, content, metadata,
+                token_estimate, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(block_id) DO UPDATE SET
+                 content        = excluded.content,
+                 metadata       = excluded.metadata,
+                 token_estimate = excluded.token_estimate,
+                 updated_at     = excluded.updated_at
+            """,
+            (block_id, session_id, layer, priority, content, meta_json,
+             token_estimate, now, now),
+        )
+        await self._conn.commit()
+
+    async def get_memory_blocks(
+        self,
+        session_id: str,
+        layers: Optional[List[str]] = None,
+    ) -> List[Dict]:
+        """获取会话的记忆块，按 priority ASC, updated_at DESC 排序。"""
+        if layers:
+            placeholders = ",".join("?" * len(layers))
+            sql = (
+                f"SELECT * FROM memory_blocks "
+                f"WHERE session_id = ? AND layer IN ({placeholders}) "
+                f"ORDER BY priority ASC, updated_at DESC"
+            )
+            args = [session_id] + layers
+        else:
+            sql = (
+                "SELECT * FROM memory_blocks "
+                "WHERE session_id = ? "
+                "ORDER BY priority ASC, updated_at DESC"
+            )
+            args = [session_id]
+
+        async with self._conn.execute(sql, args) as cur:
+            rows = await cur.fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["metadata"] = json.loads(d.get("metadata") or "{}")
+                result.append(d)
+            return result
+
+    async def get_memory_block(self, block_id: str) -> Optional[Dict]:
+        async with self._conn.execute(
+            "SELECT * FROM memory_blocks WHERE block_id = ?", (block_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["metadata"] = json.loads(d.get("metadata") or "{}")
+            return d
+
+    async def delete_memory_block(self, block_id: str) -> None:
+        await self._conn.execute(
+            "DELETE FROM memory_blocks WHERE block_id = ?", (block_id,)
+        )
+        await self._conn.commit()
+
+    async def delete_memory_blocks_by_layer(self, session_id: str, layer: str) -> None:
+        await self._conn.execute(
+            "DELETE FROM memory_blocks WHERE session_id = ? AND layer = ?",
+            (session_id, layer),
+        )
+        await self._conn.commit()
+
+    async def count_memory_tokens(self, session_id: str, layer: str) -> int:
+        """统计某一层的粗估 token 总数。"""
+        async with self._conn.execute(
+            "SELECT COALESCE(SUM(token_estimate), 0) FROM memory_blocks "
+            "WHERE session_id = ? AND layer = ?",
+            (session_id, layer),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0

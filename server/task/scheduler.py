@@ -137,6 +137,7 @@ class SchedulerService:
         job_desc: str = "",
         session_id: str = "",
         paper_uuids: List[str] = None,
+        skill_name: str = None,
     ) -> str:
         """新建定时任务，持久化到 DB 并立即开始调度。"""
         if not _validate_cron(cron_expr):
@@ -161,6 +162,7 @@ class SchedulerService:
             job_desc=job_desc,
             session_id=session_id,
             paper_uuids=_paper_uuids,
+            skill_name=skill_name,
         )
         logger.info(f"[SchedulerService] created job {job_id} ({job_type}) @ {cron_expr}")
         return job_id
@@ -216,6 +218,7 @@ class SchedulerService:
         job_desc: str = "",
         session_id: str = "",
         paper_uuids: List[str] = None,
+        skill_name: str = None,
     ):
         fn = _make_job_fn(
             paper_uuid=paper_uuid,
@@ -223,6 +226,7 @@ class SchedulerService:
             job_desc=job_desc,
             session_id=session_id,
             paper_uuids=paper_uuids or [],
+            skill_name=skill_name,
         )
         job = ScheduledJob(job_id, paper_uuid, cron_expr, job_type, fn, job_desc=job_desc)
         self._jobs[job_id] = job
@@ -244,6 +248,7 @@ def _make_job_fn(
     job_desc: str = "",
     session_id: str = "",
     paper_uuids: List[str] = None,
+    skill_name: str = None,
 ) -> Callable:
     _paper_uuids = paper_uuids or ([paper_uuid] if paper_uuid else [])
 
@@ -257,26 +262,18 @@ def _make_job_fn(
                 f"found={len(result['found'])}, downloaded={result['downloaded']}"
             )
 
-        elif job_type == "agent_periodic":
-            # 通过 Orchestrator + LLM Agent 执行用户下达的自然语言任务
-            from server.agent.orchestrator import orchestrator
-            from server.agent.base import AgentContext
-            import json as _json
-            ctx = AgentContext(
-                session_id=session_id or "scheduler",
-                paper_uuids=_paper_uuids,
+        elif job_type.startswith("skill:") or job_type == "agent_periodic":
+            # 通过 skill executor 或 Orchestrator 执行
+            from server.task.task_executor import _make_skill_fn, _make_agent_fn
+            if skill_name:
+                fn = _make_skill_fn(skill_name, job_desc, _paper_uuids)
+            else:
+                fn = _make_agent_fn(job_desc, session_id or "scheduler", _paper_uuids)
+            result = await fn()
+            logger.info(
+                f"[SchedulerService] {job_type} done: "
+                f"{str(result)[:200]}"
             )
-            logger.info(f"[SchedulerService] agent_periodic firing: {job_desc[:80]}")
-            async for event_str in orchestrator.run(ctx, job_desc):
-                try:
-                    ev = _json.loads(event_str)
-                    if ev.get("event") == "answer":
-                        logger.info(
-                            f"[SchedulerService] agent_periodic result: "
-                            f"{ev['data'].get('content', '')[:200]}"
-                        )
-                except Exception:
-                    pass
         else:
             logger.warning(f"[SchedulerService] unknown job_type: {job_type}")
 

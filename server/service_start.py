@@ -9,6 +9,7 @@ from server.task.task_api import router as task_router
 from server.chat.chat_api import router as chat_router
 from server.agent.citation_api import router as citation_router
 from server.translate.translate_api import router as translate_router
+from server.skills.skill_api import router as skills_router
 
 
 @asynccontextmanager
@@ -18,6 +19,9 @@ async def lifespan(app: FastAPI):
     task_manager.initialize()
     scheduler.initialize()
     await scheduler.restore_from_db()   # 恢复持久化的定时任务
+    # 扫描并注册本地 skills
+    from server.skills.skill_registry import skill_registry
+    skill_registry.initialize()
     yield
     # ── 关闭 ──────────────────────────────────────────
     await scheduler.shutdown()
@@ -43,6 +47,7 @@ app.include_router(task_router)
 app.include_router(chat_router)
 app.include_router(citation_router)
 app.include_router(translate_router)
+app.include_router(skills_router)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse
 
 from server.agent.base import AgentContext
 from server.agent.orchestrator import orchestrator
+from server.agent.memory.memory_manager import MemoryManager
 from server.db.db_factory import DBFactory
 from server.utils.logger import logger
 
@@ -45,17 +46,29 @@ class NewSessionRequest(BaseModel):
 async def chat_send(req: ChatRequest):
     """
     SSE 接口：实时推送 Agent 执行事件。
+
+    上下文加载顺序：
+      1. MemoryManager.load()  从 SQLite memory_blocks 加载四层记忆
+      2. 构建 AgentContext，memory 字段指向 MemoryManager
+      3. Orchestrator 执行完毕后，将用户输入和最终回答写入 history 层
+      4. Agent 执行中产生的 RAG 结果等写入 working 层
     """
     sqlite = DBFactory.get_sqlite()
 
     if not await sqlite.check_session_exist(req.session_id):
         await sqlite.add_session(session_id=req.session_id)
 
-    history = await sqlite.get_session_messages(req.session_id, limit=20)
+    # ── 初始化四层记忆 ─────────────────────────────────────────────────────
+    memory = MemoryManager(session_id=req.session_id, paper_uuids=req.paper_uuids)
+    await memory.load()
+
+    # 更新 user_intent 层（当前用户意图，永久保留到下一次更新）
+    await memory.set_user_intent(req.message)
+
     ctx = AgentContext(
         session_id=req.session_id,
         paper_uuids=req.paper_uuids,
-        messages=[{"role": m["role"], "content": m["content"]} for m in history],
+        memory=memory,
     )
 
     async def event_stream():
@@ -76,6 +89,7 @@ async def chat_send(req: ChatRequest):
             yield f"data: {json.dumps({'event': 'error', 'data': {'message': str(e)}}, ensure_ascii=False)}\n\n"
         finally:
             try:
+                # ── 持久化到 messages 表（用于前端历史展示）──────────────────
                 await sqlite.add_message(
                     session_id=req.session_id,
                     role="user",
@@ -87,10 +101,18 @@ async def chat_send(req: ChatRequest):
                         role="assistant",
                         content=full_answer,
                     )
+
+                # ── 写入四层记忆的历史层（用于 LLM 上下文）──────────────────
+                await memory.add_history_turn("user", req.message)
+                if full_answer:
+                    await memory.add_history_turn("assistant", full_answer)
+
+                # ── 自动设置会话标题（首次对话）──────────────────────────────
                 msgs = await sqlite.get_session_messages(req.session_id, limit=2)
                 if len(msgs) <= 2:
                     title = req.message[:40] + ("…" if len(req.message) > 40 else "")
                     await sqlite.update_session_title(req.session_id, title)
+
             except Exception as e:
                 logger.error(f"[chat_api] persist failed: {e}")
 
@@ -141,6 +163,9 @@ async def get_session_messages(session_id: str, limit: int = 50):
 async def delete_session(session_id: str):
     sqlite = DBFactory.get_sqlite()
     await sqlite.delete_session(session_id)
+    # 清除该 session 的所有记忆块（四层一次性清理）
+    for layer in ("system", "user_intent", "working", "history"):
+        await sqlite.delete_memory_blocks_by_layer(session_id, layer)
     return JSONResponse(content={"status": "deleted", "session_id": session_id})
 
 

@@ -34,6 +34,14 @@ class RAGAgent(AgentBase):
         ctx.shared_memory["rag_sources"] = result["sources"]
         ctx.shared_memory["rag_mode"] = result.get("mode", "simple")
 
+        # 将 RAG 结果写入工作记忆层（供后续轮次复用）
+        rag_summary = f"检索结果（模式：{result.get('mode', 'simple')}）：\n{result['answer'][:800]}"
+        await ctx.save_working_memory(
+            key=f"rag_result",
+            content=rag_summary,
+            metadata={"query": focus, "mode": result.get("mode", "simple")},
+        )
+
         return {
             "summary": result["answer"][:200],
             "answer":  result["answer"],

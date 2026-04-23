@@ -103,15 +103,11 @@ class SupervisorAgent(AgentBase):
             "paper_uuids": [...],     # 关联的论文
           }
         """
-        history = ctx.to_history_text(n=4)
-        prompt = f"""你是一个学术论文助手的任务规划专家。
+        agent_task = f"""你是一个学术论文助手的任务规划专家。
 根据用户输入，从以下意图类型中选择最匹配的一个，并返回 JSON。
 
 意图类型及判断规则：
 {INTENT_DESCRIPTIONS}
-
-对话历史（最近4轮）：
-{history}
 
 用户当前输入：
 {user_input}
@@ -125,9 +121,8 @@ class SupervisorAgent(AgentBase):
   "cron_expr": "<仅当 intent 为 task_periodic 时填写 cron 表达式（5字段），否则填空字符串。例：'0 9 * * 0' 表示每周日9点>"
 }}"""
 
-        resp = await self._invoke(
-            [{"role": "user", "content": prompt}],
-            temperature=0.1,
+        resp = await self._invoke_with_context(
+            ctx, agent_task=agent_task, temperature=0.1, n_history=4
         )
         try:
             data = json.loads(resp.strip())
@@ -144,16 +139,57 @@ class SupervisorAgent(AgentBase):
 
         # 后台任务：不走 Agent 链，由 Orchestrator 发出 confirm 事件
         if intent in ("task_once", "task_periodic"):
+            skill_name = await self._select_skill(user_input, data.get("task_desc", user_input))
             task_meta = {
                 "task_type": "periodic" if intent == "task_periodic" else "once",
                 "task_desc": data.get("task_desc", user_input),
                 "cron_expr": data.get("cron_expr", ""),
                 "paper_uuids": ctx.paper_uuids,
+                "skill_name": skill_name,   # None 表示无匹配 skill，降级到 Orchestrator
             }
             return intent, [], task_meta
 
         plan = INTENT_PLAN.get(intent, INTENT_PLAN["general"])
         return intent, plan, {}
+
+    async def _select_skill(self, user_input: str, task_desc: str) -> str | None:
+        """
+        从已注册的 skills 中选择最匹配的一个。
+        返回 skill name（如 "academic-literature-search"）或 None（无匹配）。
+        优先用触发词快速匹配，无匹配时调用 LLM 判断。
+        """
+        from server.skills.skill_registry import skill_registry
+        skill_registry.initialize()
+        skills = skill_registry.list_skills()
+        if not skills:
+            return None
+
+        combined = (user_input + " " + task_desc).lower()
+
+        # 快速触发词匹配
+        for skill in skills:
+            for trigger in skill.triggers:
+                if trigger.lower() in combined:
+                    return skill.name
+
+        # 无触发词命中时，用 LLM 决策
+        skill_list = "\n".join(f"- {s.name}: {s.description}" for s in skills)
+        prompt = f"""你是一个技能路由专家。根据用户任务，从以下可用 skills 中选择最匹配的一个。
+如果没有合适的 skill，输出 null。
+
+可用 skills：
+{skill_list}
+
+用户任务：{task_desc}
+
+只输出 skill 的 name 字符串或 null，不要任何其他内容。"""
+        resp = await self._invoke([{"role": "user", "content": prompt}], temperature=0.1)
+        resp = resp.strip().strip('"').strip("'")
+        if resp.lower() in ("null", "none", "", "无"):
+            return None
+        # 验证返回的 name 确实存在
+        skill_names = {s.name for s in skills}
+        return resp if resp in skill_names else None
 
     async def replan(self, ctx: AgentContext, check_result: Dict) -> List[str]:
         """
@@ -163,7 +199,7 @@ class SupervisorAgent(AgentBase):
         issue = check_result.get("issue", "")
         intent = ctx.shared_memory.get("intent", "general")
 
-        prompt = f"""当前任务意图：{intent}
+        agent_task = f"""当前任务意图：{intent}
 CheckAgent 发现的问题：{issue}
 已执行的步骤：{ctx.shared_memory.get("completed_agents", [])}
 
@@ -174,9 +210,8 @@ CheckAgent 发现的问题：{issue}
 输出 JSON 数组，例如：["rag_agent", "writing_agent", "check_agent"]
 只输出 JSON，不要有任何其他文字。"""
 
-        resp = await self._invoke(
-            [{"role": "user", "content": prompt}],
-            temperature=0.1,
+        resp = await self._invoke_with_context(
+            ctx, agent_task=agent_task, temperature=0.1, n_history=2
         )
         try:
             new_plan = json.loads(resp.strip())

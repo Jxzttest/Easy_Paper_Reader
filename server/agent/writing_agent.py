@@ -14,28 +14,28 @@ WritingAgent —— 论文写作 / 润色
 from typing import Dict
 from server.agent.base import AgentBase, AgentContext
 
-# 各模式的 system prompt
-_SYSTEM_PROMPTS = {
+# 各模式的任务前缀（注入到 agent_task 中，由 ContextBuilder 合并系统提示）
+_MODE_PROMPTS = {
     "innovation": (
-        "你是一位顶级学术论文分析专家。请基于提供的论文内容，"
-        "系统地梳理该论文的核心创新点。"
-        "要求：结构清晰（可用序号列出），指出每个创新点相比已有工作的突破，"
+        "【任务模式：创新点梳理】\n"
+        "请基于以下论文检索内容，系统地梳理该论文的核心创新点。\n"
+        "要求：结构清晰（用序号列出），指出每个创新点相比已有工作的突破，"
         "语言严谨、客观。"
     ),
     "draft": (
-        "你是一位专业的学术写作助手。请根据用户的要求和提供的参考内容，"
-        "撰写高质量的学术文字。"
+        "【任务模式：学术写作】\n"
+        "请根据用户要求和提供的参考内容，撰写高质量的学术文字。\n"
         "要求：语言正式、逻辑严密、符合学术规范，避免口语化表达。"
     ),
     "polish": (
-        "你是一位资深学术编辑。请对用户提供的文字进行修改润色。"
-        "要求：保留原意，提升语言表达的准确性和流畅性，"
-        "修正语法错误，使其符合顶级期刊的写作标准。"
-        "请先给出修改后的版本，再简要说明主要改动。"
+        "【任务模式：润色修改】\n"
+        "请对用户提供的文字进行修改润色。\n"
+        "要求：保留原意，提升语言表达的准确性和流畅性，修正语法错误，"
+        "使其符合顶级期刊写作标准。请先给出修改后版本，再简要说明主要改动。"
     ),
     "general": (
-        "你是一位专业的学术论文助手，擅长学术写作和论文分析。"
-        "请根据用户的需求提供高质量的帮助。"
+        "【任务模式：通用学术助手】\n"
+        "请根据用户的需求提供高质量的学术帮助。"
     ),
 }
 
@@ -58,8 +58,6 @@ class WritingAgent(AgentBase):
         elif intent == "polish":
             mode = "polish"
 
-        system_prompt = _SYSTEM_PROMPTS.get(mode, _SYSTEM_PROMPTS["general"])
-
         # 把 RAGAgent 的检索结果作为参考内容（如果有）
         rag_answer = ctx.shared_memory.get("rag_answer", "")
         rag_sources = ctx.shared_memory.get("rag_sources", [])
@@ -71,22 +69,25 @@ class WritingAgent(AgentBase):
         elif rag_answer:
             reference_text = f"\n\n参考内容：\n{rag_answer}"
 
-        history = ctx.to_history_text(n=4)
+        mode_prompt = _MODE_PROMPTS.get(mode, _MODE_PROMPTS["general"])
+        agent_task = (
+            f"{mode_prompt}\n"
+            f"{reference_text}\n\n"
+            f"用户请求：{user_input}"
+        )
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"对话历史：\n{history}\n"
-                    f"{reference_text}\n\n"
-                    f"用户请求：{user_input}"
-                ),
-            },
-        ]
-
-        result = await self._invoke(messages, temperature=0.6)
+        # 携带四层记忆上下文（working 层包含 RAG 结果，history 层包含对话历史）
+        result = await self._invoke_with_context(
+            ctx, agent_task=agent_task, temperature=0.6, n_history=4
+        )
         ctx.shared_memory["writing_result"] = result
+
+        # 将写作结果写入工作记忆层
+        await ctx.save_working_memory(
+            key="writing_result",
+            content=f"【写作结果（{mode}模式）】\n{result[:600]}",
+            metadata={"mode": mode, "intent": intent},
+        )
 
         return {
             "summary": result[:200],
