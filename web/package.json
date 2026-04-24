@@ -59,7 +59,7 @@
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.52.0",
     "pdfjs-dist": "^4.4.168",
-    "react-pdf-highlighter-extended": "^2.2.0",
+    "react-pdf-highlighter-extended": "^8.1.0",
     "react-resizable-panels": "^2.0.19",
     "react-router-dom": "^6.23.1",
     "recharts": "^2.12.7",

@@ -2,9 +2,10 @@ import { useState, useCallback, useRef } from 'react';
 import {
   PdfHighlighter,
   PdfLoader,
-  Highlight,
-  Popup,
+  TextHighlight,
   AreaHighlight,
+  MonitoredHighlightContainer,
+  useHighlightContainerContext,
 } from 'react-pdf-highlighter-extended';
 import { Loader2, Languages, Highlighter, MessageSquare, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -69,33 +70,93 @@ function TranslationPopup({ text, onClose }) {
   );
 }
 
+// ── 单个高亮容器（v8 通过 context 获取 highlight 信息）────────────────────────
+function HighlightContainer({ onTranslate, onRemove, onUpdatePosition }) {
+  const { highlight, isScrolledTo, highlightBindings, viewportToScaled } =
+    useHighlightContainerContext();
+
+  const isText = highlight.type === 'text' || highlight.content?.text !== undefined;
+
+  const highlightTip = {
+    position: highlight.position,
+    content: (
+      <div className="flex gap-1 bg-white border border-gray-200 rounded-lg shadow-lg p-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-xs h-7 px-2"
+          onClick={() => onTranslate(highlight.content?.text, highlight.position)}
+        >
+          <Languages className="w-3 h-3 mr-1" /> 翻译
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-xs h-7 px-2 text-red-500 hover:text-red-600"
+          onClick={() => onRemove(highlight.id)}
+        >
+          <X className="w-3 h-3 mr-1" /> 删除
+        </Button>
+      </div>
+    ),
+  };
+
+  return (
+    <MonitoredHighlightContainer highlightTip={highlightTip}>
+      {isText ? (
+        <TextHighlight
+          highlight={highlight}
+          isScrolledTo={isScrolledTo}
+          style={{ backgroundColor: highlight.color || COLORS.yellow }}
+        />
+      ) : (
+        <AreaHighlight
+          highlight={highlight}
+          isScrolledTo={isScrolledTo}
+          onChange={(boundingRect) => {
+            onUpdatePosition(highlight.id, {
+              boundingRect: viewportToScaled(boundingRect),
+              rects: [viewportToScaled(boundingRect)],
+            });
+          }}
+          bounds={highlightBindings.textLayer.parentElement}
+        />
+      )}
+    </MonitoredHighlightContainer>
+  );
+}
+
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 export default function PdfViewer({ url, onAskAI }) {
   const [highlights, setHighlights] = useState([]);
   const [translating, setTranslating] = useState(false);
-  const [translationPopup, setTranslationPopup] = useState(null); // { text, position }
+  const [translationPopup, setTranslationPopup] = useState(null);
   const highlightIdRef = useRef(0);
 
   const nextId = () => `hl-${++highlightIdRef.current}`;
 
-  // 添加高亮
-  const addHighlight = useCallback((highlight, color = 'yellow') => {
-    setHighlights(prev => [
+  const addHighlight = useCallback((ghostHighlight, color = 'yellow') => {
+    setHighlights((prev) => [
       ...prev,
       {
-        ...highlight,
+        ...ghostHighlight,
         id: nextId(),
         color: COLORS[color] || COLORS.yellow,
+        type: ghostHighlight.type,
       },
     ]);
   }, []);
 
-  // 删除高亮
   const removeHighlight = useCallback((id) => {
-    setHighlights(prev => prev.filter(h => h.id !== id));
+    setHighlights((prev) => prev.filter((h) => h.id !== id));
   }, []);
 
-  // 翻译选中文本
+  const updateHighlightPosition = useCallback((id, position) => {
+    setHighlights((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, position: { ...h.position, ...position } } : h))
+    );
+  }, []);
+
   const handleTranslate = useCallback(async (selectedText, position) => {
     if (!selectedText?.trim()) return;
     setTranslating(true);
@@ -110,53 +171,25 @@ export default function PdfViewer({ url, onAskAI }) {
     }
   }, []);
 
-  // 构建选中文本的 SelectionTip（操作菜单）
-  const selectionTip = useCallback(
-    (highlight, hideTipAndSelection) => {
-      const selectedText = highlight?.content?.text || '';
-      return (
-        <SelectionToolbar
-          onTranslate={() => {
-            handleTranslate(selectedText, highlight.position);
-            hideTipAndSelection();
-          }}
-          onHighlight={(color) => {
-            addHighlight(highlight, color);
-            hideTipAndSelection();
-          }}
-          onAskAI={() => {
-            onAskAI?.(selectedText);
-            hideTipAndSelection();
-          }}
-        />
-      );
-    },
-    [addHighlight, handleTranslate, onAskAI]
-  );
-
-  // 单个高亮的 Popup（点击高亮块后显示）
-  const highlightPopup = useCallback(
-    (highlight) => (
-      <div className="flex gap-1 bg-white border border-gray-200 rounded-lg shadow-lg p-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-xs h-7 px-2"
-          onClick={() => handleTranslate(highlight.content?.text, highlight.position)}
-        >
-          <Languages className="w-3 h-3 mr-1" /> 翻译
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-xs h-7 px-2 text-red-500 hover:text-red-600"
-          onClick={() => removeHighlight(highlight.id)}
-        >
-          <X className="w-3 h-3 mr-1" /> 删除
-        </Button>
-      </div>
+  // selectionTip: 选中文本后显示的操作菜单（v8 直接传 ReactNode，通过 onSelection 回调处理）
+  const buildSelectionTip = useCallback(
+    (selection, hideTipAndSelection) => (
+      <SelectionToolbar
+        onTranslate={() => {
+          handleTranslate(selection.content?.text, selection.position);
+          hideTipAndSelection();
+        }}
+        onHighlight={(color) => {
+          addHighlight(selection.makeGhostHighlight(), color);
+          hideTipAndSelection();
+        }}
+        onAskAI={() => {
+          onAskAI?.(selection.content?.text);
+          hideTipAndSelection();
+        }}
+      />
     ),
-    [handleTranslate, removeHighlight]
+    [addHighlight, handleTranslate, onAskAI]
   );
 
   return (
@@ -179,44 +212,15 @@ export default function PdfViewer({ url, onAskAI }) {
             pdfDocument={pdfDocument}
             highlights={highlights}
             enableAreaSelection={(event) => event.altKey}
-            selectionTip={selectionTip}
-            onScrollChange={() => setTranslationPopup(null)}
-            highlightTransform={(highlight, index, setTip, hideTip, viewportToScaled, screenshot, isScrolledTo) => {
-              const isTextHighlight = highlight.content?.text !== undefined;
-              const component = isTextHighlight ? (
-                <Highlight
-                  isScrolledTo={isScrolledTo}
-                  position={highlight.position}
-                  comment={{ text: '', emoji: '' }}
-                  style={{ backgroundColor: highlight.color || COLORS.yellow }}
-                />
-              ) : (
-                <AreaHighlight
-                  isScrolledTo={isScrolledTo}
-                  highlight={highlight}
-                  onChange={(boundingRect) => {
-                    setHighlights(prev =>
-                      prev.map(h =>
-                        h.id === highlight.id
-                          ? { ...h, position: { ...h.position, boundingRect, rects: [boundingRect] } }
-                          : h
-                      )
-                    );
-                  }}
-                />
-              );
-              return (
-                <Popup
-                  popupContent={highlightPopup(highlight)}
-                  onMouseOver={(popupContent) => setTip(highlight, () => popupContent)}
-                  onMouseOut={hideTip}
-                  key={index}
-                >
-                  {component}
-                </Popup>
-              );
-            }}
-          />
+            onScrollAway={() => setTranslationPopup(null)}
+            onSelection={buildSelectionTip}
+          >
+            <HighlightContainer
+              onTranslate={handleTranslate}
+              onRemove={removeHighlight}
+              onUpdatePosition={updateHighlightPosition}
+            />
+          </PdfHighlighter>
         )}
       </PdfLoader>
 
