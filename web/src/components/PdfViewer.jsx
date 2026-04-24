@@ -128,6 +128,14 @@ function HighlightContainer({ onTranslate, onRemove, onUpdatePosition }) {
 
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 export default function PdfViewer({ url, onAskAI }) {
+  // url 为空时不渲染（防止 PdfLoader 收到 undefined）
+  if (!url) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
+        暂无 PDF
+      </div>
+    );
+  }
   const [highlights, setHighlights] = useState([]);
   const [translating, setTranslating] = useState(false);
   const [translationPopup, setTranslationPopup] = useState(null);
@@ -201,11 +209,11 @@ export default function PdfViewer({ url, onAskAI }) {
             <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
           </div>
         }
-        errorMessage={
+        errorMessage={(error) => (
           <div className="w-full h-full flex items-center justify-center text-red-500 text-sm">
-            PDF 加载失败，请检查文件是否存在
+            PDF 加载失败：{error?.message || '请检查文件是否存在'}
           </div>
-        }
+        )}
       >
         {(pdfDocument) => (
           <PdfHighlighter
