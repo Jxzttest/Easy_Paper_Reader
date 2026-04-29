@@ -126,11 +126,11 @@ const Dashboard = () => {
       pollingRef.current[paper.id] = setInterval(async () => {
         try {
           const task = await getTask(paper.taskId);
-          if (task.status === 'done' || task.status === 'failed') {
+          if (task.status === 'success' || task.status === 'failed') {
             clearInterval(pollingRef.current[paper.id]);
             delete pollingRef.current[paper.id];
             await fetchPapers();
-            if (task.status === 'done') toast.success('论文解析完成');
+            if (task.status === 'success') toast.success('论文解析完成');
             else toast.error('论文解析失败');
           }
         } catch {
@@ -185,16 +185,21 @@ const Dashboard = () => {
 
     try {
       const result = await uploadPaper(file);
-      await fetchPapers();
-      // 对新 task 启动轮询
+      // 用真实数据替换临时卡片，不立即 fetchPapers（避免 parsing 状态被覆盖）
+      setPapers(prev => prev.map(p =>
+        p.id === tempId
+          ? { ...p, taskId: result.task_id || null }
+          : p
+      ));
+      // 启动轮询，完成后刷新列表
       if (result.task_id) {
         const timer = setInterval(async () => {
           try {
             const task = await getTask(result.task_id);
-            if (task.status === 'done' || task.status === 'failed') {
+            if (task.status === 'success' || task.status === 'failed') {
               clearInterval(timer);
               await fetchPapers();
-              if (task.status === 'done') toast.success('论文解析完成');
+              if (task.status === 'success') toast.success('论文解析完成');
               else toast.error('论文解析失败');
             }
           } catch { clearInterval(timer); }

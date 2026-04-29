@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { GlobalWorkerOptions } from 'pdfjs-dist';
 import {
   PdfHighlighter,
   PdfLoader,
@@ -7,6 +8,10 @@ import {
   MonitoredHighlightContainer,
   useHighlightContainerContext,
 } from 'react-pdf-highlighter-extended';
+
+// 强制使用本地 worker，避免 CDN 版本与本地 pdfjs-dist 版本不一致
+const WORKER_SRC = '/pdf.worker.min.mjs';
+GlobalWorkerOptions.workerSrc = WORKER_SRC;
 import { Loader2, Languages, Highlighter, MessageSquare, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { translateText } from '@/api';
@@ -75,7 +80,7 @@ function HighlightContainer({ onTranslate, onRemove, onUpdatePosition }) {
   const { highlight, isScrolledTo, highlightBindings, viewportToScaled } =
     useHighlightContainerContext();
 
-  const isText = highlight.type === 'text' || highlight.content?.text !== undefined;
+  const isText = highlight.type === 'text';
 
   const highlightTip = {
     position: highlight.position,
@@ -85,7 +90,7 @@ function HighlightContainer({ onTranslate, onRemove, onUpdatePosition }) {
           size="sm"
           variant="ghost"
           className="text-xs h-7 px-2"
-          onClick={() => onTranslate(highlight.content?.text, highlight.position)}
+          onClick={() => onTranslate(highlight.text, highlight.position)}
         >
           <Languages className="w-3 h-3 mr-1" /> 翻译
         </Button>
@@ -128,14 +133,6 @@ function HighlightContainer({ onTranslate, onRemove, onUpdatePosition }) {
 
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 export default function PdfViewer({ url, onAskAI }) {
-  // url 为空时不渲染（防止 PdfLoader 收到 undefined）
-  if (!url) {
-    return (
-      <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
-        暂无 PDF
-      </div>
-    );
-  }
   const [highlights, setHighlights] = useState([]);
   const [translating, setTranslating] = useState(false);
   const [translationPopup, setTranslationPopup] = useState(null);
@@ -151,6 +148,8 @@ export default function PdfViewer({ url, onAskAI }) {
         id: nextId(),
         color: COLORS[color] || COLORS.yellow,
         type: ghostHighlight.type,
+        // 保留文字供翻译使用（避免直接依赖已废弃的 content 字段）
+        text: ghostHighlight.content?.text ?? '',
       },
     ]);
   }, []);
@@ -200,10 +199,19 @@ export default function PdfViewer({ url, onAskAI }) {
     [addHighlight, handleTranslate, onAskAI]
   );
 
+  if (!url) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
+        暂无 PDF
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-full h-full overflow-hidden bg-gray-100">
       <PdfLoader
-        url={url}
+        document={url}
+        workerSrc={WORKER_SRC}
         beforeLoad={
           <div className="w-full h-full flex items-center justify-center">
             <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
