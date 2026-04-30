@@ -18,6 +18,22 @@ from server.model.llm_model.llm_function import LLMManager
 from server.db.db_factory import DBFactory
 from server.utils.logger import logger
 
+# 元数据问题关键词（命中任意一个则走元数据检索）
+_METADATA_KEYWORDS = [
+    # 标题相关
+    "论文名", "标题", "题目", "论文题目", "paper title", "title",
+    # 作者相关
+    "作者", "authors", "author", "谁写的", "谁发表",
+    # 页数相关
+    "多少页", "几页", "页数", "页码", "page count", "pages", "how many pages",
+    # 摘要相关
+    "摘要", "abstract", "概要",
+    # 年份相关
+    "发表年", "发表时间", "年份", "年代", "publish year", "publication year", "when published",
+    # doi/arxiv
+    "doi", "arxiv",
+]
+
 
 class RetrievalResult:
     """检索结果的统一包装。"""
@@ -97,22 +113,17 @@ class BaseRAG(ABC):
         return await self.llm.invoke(messages, temperature=temperature)
 
     async def _evaluate_quality(self, query: str, chunks: List[Dict]) -> float:
-        """用 LLM 给检索结果的相关性打分（0~1）。"""
+        """基于检索分数估算相关性（不调 LLM，消除串行延迟）。"""
         if not chunks:
             return 0.0
-        sample = "\n".join(c["content"][:200] for c in chunks[:3])
-        prompt = (
-            f"请评估以下检索内容与问题的相关程度，只返回0到1之间的小数。\n"
-            f"问题：{query}\n检索内容摘要：{sample}\n相关性分数："
-        )
-        try:
-            resp = await self._llm_invoke(
-                [{"role": "user", "content": prompt}], temperature=0.0
-            )
-            return min(1.0, max(0.0, float(resp.strip().split()[0])))
-        except Exception:
-            # 降级：用 chunk 数量估算
-            return min(1.0, len(chunks) / 8)
+        # chunks 已按 score 降序排列，取前 top_k 的均值
+        scores = [c.get("score", 0.0) for c in chunks[:8]]
+        if not scores:
+            return 0.0
+        avg = sum(scores) / len(scores)
+        top = scores[0]
+        # 加权：top 分权重 0.6，均值权重 0.4
+        return min(1.0, 0.6 * top + 0.4 * avg)
 
     async def _generate_answer(self, query: str, retrieval: RetrievalResult) -> str:
         """通用答案生成（子类可覆盖）。"""
@@ -131,3 +142,75 @@ class BaseRAG(ABC):
             },
         ]
         return await self._llm_invoke(messages)
+
+    # ── 元数据检索 ────────────────────────────────────────────────────────
+
+    def _is_metadata_query(self, query: str) -> bool:
+        """判断问题是否主要关心论文元数据（标题/作者/页数/摘要等）。"""
+        q_lower = query.lower()
+        return any(kw in q_lower for kw in _METADATA_KEYWORDS)
+
+    async def _answer_from_metadata(
+        self,
+        query: str,
+        paper_uuids: Optional[List[str]],
+    ) -> Optional[Dict]:
+        """
+        从 SQLite 元数据直接生成答案。
+        若无法找到对应论文返回 None，让调用方降级到向量检索。
+        """
+        sqlite = DBFactory.get_sqlite()
+
+        if paper_uuids:
+            metas = []
+            for uid in paper_uuids:
+                m = await sqlite.get_paper_metadata(uid)
+                if m:
+                    metas.append(m)
+        else:
+            metas = await sqlite.get_all_papers()
+
+        if not metas:
+            return None
+
+        # 构造元数据描述文本
+        meta_lines = []
+        for m in metas:
+            parts = [f"标题：{m.get('title', '未知')}"]
+            if m.get("authors"):
+                parts.append(f"作者：{m['authors']}")
+            if m.get("publish_year"):
+                parts.append(f"发表年份：{m['publish_year']}")
+            if m.get("page_count"):
+                parts.append(f"总页数：{m['page_count']} 页")
+            if m.get("abstract"):
+                parts.append(f"摘要：{m['abstract'][:300]}")
+            if m.get("doi"):
+                parts.append(f"DOI：{m['doi']}")
+            if m.get("arxiv_id"):
+                parts.append(f"arXiv ID：{m['arxiv_id']}")
+            meta_lines.append("\n".join(parts))
+
+        meta_text = "\n\n---\n\n".join(meta_lines)
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是一位学术论文助手。根据以下论文元数据精准回答用户问题。"
+                    "如果元数据中没有相关信息，请明确说明。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"论文元数据：\n{meta_text}\n\n问题：{query}",
+            },
+        ]
+        answer = await self._llm_invoke(messages)
+        return {
+            "answer": answer,
+            "sources": [],
+            "retrieval_attempts": 1,
+            "quality_score": 1.0,
+            "mode": "metadata",
+        }

@@ -45,10 +45,19 @@ class RAGEngine(BaseRAG):
     ) -> Dict:
         """
         自适应检索入口：
+          - 元数据问题（论文名/作者/页数等）→ 直接查 SQLite
           - 先做简单检索
           - 质量低 → 自动切换 DeepSearchRAG
         """
         logger.info(f"[RAGEngine] query='{query[:50]}...'")
+
+        # 元数据问题优先走元数据检索
+        if self._is_metadata_query(query):
+            logger.info("[RAGEngine] detected metadata query → metadata retrieval")
+            meta_result = await self._answer_from_metadata(query, paper_uuids)
+            if meta_result:
+                return meta_result
+            logger.info("[RAGEngine] metadata not found → fallback to vector search")
 
         retrieval = await self.retrieve(query, paper_uuids, top_k)
         logger.info(f"[RAGEngine] quality_score={retrieval.quality_score:.2f}, chunks={len(retrieval.chunks)}")

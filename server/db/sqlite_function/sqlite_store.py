@@ -31,6 +31,7 @@ class SQLiteStore:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._create_tables()
+        await self._migrate()
         await self._conn.commit()
         logger.info(f"[SQLiteStore] initialized at {self.db_path}")
 
@@ -53,6 +54,7 @@ class SQLiteStore:
                 doi             TEXT,
                 arxiv_id        TEXT,
                 file_path       TEXT,
+                page_count      INTEGER DEFAULT 0,
                 is_processed    INTEGER NOT NULL DEFAULT 0,
                 parse_mode      TEXT DEFAULT 'pymupdf',
                 created_at      TEXT NOT NULL
@@ -124,6 +126,16 @@ class SQLiteStore:
                 ON memory_blocks(session_id, layer);
         """)
 
+    async def _migrate(self):
+        """向前兼容迁移：给旧表补充新字段。"""
+        async with self._conn.execute("PRAGMA table_info(paper_metadata)") as cur:
+            columns = {row[1] async for row in cur}
+        if "page_count" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE paper_metadata ADD COLUMN page_count INTEGER DEFAULT 0"
+            )
+            logger.info("[SQLiteStore] migrated: added page_count to paper_metadata")
+
     # ------------------------------------------------------------------ #
     # Papers
     # ------------------------------------------------------------------ #
@@ -138,15 +150,16 @@ class SQLiteStore:
         arxiv_id: str = "",
         publish_year: Optional[int] = None,
         parse_mode: str = "pymupdf",
+        page_count: int = 0,
     ) -> None:
         now = datetime.datetime.utcnow().isoformat()
         await self._conn.execute(
             """INSERT OR IGNORE INTO paper_metadata
                (paper_uuid, title, authors, publish_year, abstract, doi, arxiv_id,
-                file_path, is_processed, parse_mode, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                file_path, page_count, is_processed, parse_mode, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
             (paper_uuid, title, authors, publish_year, abstract, doi, arxiv_id,
-             file_path, parse_mode, now)
+             file_path, page_count, parse_mode, now)
         )
         await self._conn.commit()
 
@@ -178,7 +191,7 @@ class SQLiteStore:
         await self._conn.commit()
 
     async def update_paper_fields(self, paper_uuid: str, **fields) -> None:
-        allowed = {"title", "authors", "abstract", "doi", "arxiv_id", "publish_year", "parse_mode"}
+        allowed = {"title", "authors", "abstract", "doi", "arxiv_id", "publish_year", "parse_mode", "page_count"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return

@@ -65,6 +65,7 @@ class PDFParser:
             file_path=self.file_path,
             authors=metadata.get("author", ""),
             parse_mode=self.parse_mode,
+            page_count=metadata.get("page_count", 0),
         )
 
         try:

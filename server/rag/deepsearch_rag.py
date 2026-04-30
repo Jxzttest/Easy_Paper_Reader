@@ -16,6 +16,7 @@ DeepSearchRAG —— 多跳深度检索
   - deepsearch.py 是学习参考，核心的 fact_check / verify_claim 逻辑已移植到此
 """
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
